@@ -53,8 +53,38 @@ const config: Config = {
         sm: "calc(var(--radius) - 4px)",
       },
       fontFamily: {
-        sans: ["IBM Plex Sans", "sans-serif"],
-        mono: ["IBM Plex Mono", "monospace"],
+        sans: ["IBM Plex Sans", "system-ui", "sans-serif"],
+        mono: ["JetBrains Mono", "monospace"],
+        display: ["Space Grotesk", "sans-serif"],
+      },
+      animation: {
+        "fade-up": "fade-up 0.6s ease-out forwards",
+        "fade-in": "fade-in 0.4s ease-out forwards",
+        "scale-in": "scale-in 0.3s ease-out forwards",
+        "slide-in-right": "slide-in-right 0.5s ease-out forwards",
+        "slide-in-left": "slide-in-left 0.5s ease-out forwards",
+      },
+      keyframes: {
+        "fade-up": {
+          "0%": { opacity: "0", transform: "translateY(20px)" },
+          "100%": { opacity: "1", transform: "translateY(0)" },
+        },
+        "fade-in": {
+          "0%": { opacity: "0" },
+          "100%": { opacity: "1" },
+        },
+        "scale-in": {
+          "0%": { opacity: "0", transform: "scale(0.95)" },
+          "100%": { opacity: "1", transform: "scale(1)" },
+        },
+        "slide-in-right": {
+          "0%": { opacity: "0", transform: "translateX(20px)" },
+          "100%": { opacity: "1", transform: "translateX(0)" },
+        },
+        "slide-in-left": {
+          "0%": { opacity: "0", transform: "translateX(-20px)" },
+          "100%": { opacity: "1", transform: "translateX(0)" },
+        },
       },
     },
   },
