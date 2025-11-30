@@ -5,6 +5,8 @@ const nextConfig = {
       bodySizeLimit: '500mb',
     },
   },
+  // Empty turbopack config to acknowledge Turbopack usage
+  turbopack: {},
   webpack: (config, { isServer }) => {
     // Handle better-sqlite3 native module
     if (isServer) {
