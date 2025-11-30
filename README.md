@@ -7,7 +7,7 @@ A professional-grade web application for VoIP carriers to identify billing discr
 **Current Phase:** Initial Setup Complete ✅
 **Demo Target:** December 8, 2025
 **Deployment:** Hetzner CPX32 with Coolify
-**Live URL:** http://49.13.124.226
+**Live URL:** TBD
 
 ## Tech Stack
 
