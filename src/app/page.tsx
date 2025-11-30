@@ -12,6 +12,7 @@ import {
   Database,
 } from "lucide-react";
 import { FileDropzone } from "@/components/upload/FileDropzone";
+import { Ripple } from "@/components/ui/ripple";
 
 export default function Home() {
   const [fileA, setFileA] = useState<File | null>(null);
@@ -47,8 +48,19 @@ export default function Home() {
         </header>
 
         {/* Hero Section */}
-        <section className="pt-20 pb-8 px-6">
-          <div className="container mx-auto max-w-5xl">
+        <section className="pt-20 pb-8 px-6 relative">
+          {/* Ripple effect centered in hero */}
+          <div className="absolute inset-0 flex items-center justify-center overflow-hidden">
+            <div className="relative w-[1400px] h-[1400px]">
+              <Ripple
+                mainCircleSize={120}
+                mainCircleOpacity={0.45}
+                numCircles={14}
+              />
+            </div>
+          </div>
+
+          <div className="container mx-auto max-w-5xl relative z-10">
             {/* Badge */}
             <motion.div
               initial={{ opacity: 0, y: 20 }}
@@ -117,68 +129,96 @@ export default function Home() {
           </div>
         </section>
 
-        {/* Upload Section */}
-        <section className="pb-12 px-6">
-          <div className="container mx-auto max-w-5xl">
-            {/* Upload grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-              <motion.div
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ duration: 0.5, delay: 0.4 }}
-              >
-                <FileDropzone
-                  label="Your CDRs"
-                  sublabel="Internal call detail records"
-                  selectedFile={fileA}
-                  onFileSelect={setFileA}
-                  onClear={() => setFileA(null)}
-                />
-              </motion.div>
+        {/* Upload Section - Primary CTA */}
+        <section className="py-16 px-6 relative">
+          {/* Section background glow */}
+          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-accent/[0.03] to-transparent" />
 
-              <motion.div
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ duration: 0.5, delay: 0.5 }}
-              >
-                <FileDropzone
-                  label="Provider CDRs"
-                  sublabel="Counterparty records to compare"
-                  selectedFile={fileB}
-                  onFileSelect={setFileB}
-                  onClear={() => setFileB(null)}
-                />
-              </motion.div>
+          <motion.div
+            initial={{ opacity: 0, y: 30 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6, delay: 0.4 }}
+            className="container mx-auto max-w-4xl relative"
+          >
+            {/* Glowing card container */}
+            <div className="relative rounded-2xl p-px bg-gradient-to-b from-accent/40 via-accent/10 to-transparent">
+              {/* Inner glow effect */}
+              <div className="absolute -inset-1 bg-accent/20 rounded-2xl blur-xl opacity-50" />
+
+              {/* Card content */}
+              <div className="relative bg-gradient-to-b from-card to-background rounded-2xl p-8 md:p-10">
+                {/* Section header */}
+                <div className="text-center mb-8">
+                  <h2 className="font-display text-2xl font-bold tracking-tight mb-2">
+                    Start Your Reconciliation
+                  </h2>
+                  <p className="text-muted-foreground text-sm">
+                    Upload both files to begin comparing records
+                  </p>
+                </div>
+
+                {/* Upload grid */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                  <FileDropzone
+                    label="Your CDRs"
+                    sublabel="Internal call detail records"
+                    selectedFile={fileA}
+                    onFileSelect={setFileA}
+                    onClear={() => setFileA(null)}
+                  />
+
+                  <FileDropzone
+                    label="Provider CDRs"
+                    sublabel="Counterparty records to compare"
+                    selectedFile={fileB}
+                    onFileSelect={setFileB}
+                    onClear={() => setFileB(null)}
+                  />
+                </div>
+
+                {/* Progress indicator */}
+                <div className="flex items-center justify-center gap-3 mb-6">
+                  <div className={`flex items-center gap-2 text-sm ${fileA ? 'text-accent' : 'text-muted-foreground'}`}>
+                    <div className={`w-2 h-2 rounded-full ${fileA ? 'bg-accent' : 'bg-muted-foreground/30'}`} />
+                    <span>Your CDRs</span>
+                  </div>
+                  <div className="w-8 h-px bg-border" />
+                  <div className={`flex items-center gap-2 text-sm ${fileB ? 'text-accent' : 'text-muted-foreground'}`}>
+                    <div className={`w-2 h-2 rounded-full ${fileB ? 'bg-accent' : 'bg-muted-foreground/30'}`} />
+                    <span>Provider CDRs</span>
+                  </div>
+                  <div className="w-8 h-px bg-border" />
+                  <div className={`flex items-center gap-2 text-sm ${bothFilesSelected ? 'text-accent' : 'text-muted-foreground'}`}>
+                    <div className={`w-2 h-2 rounded-full ${bothFilesSelected ? 'bg-accent' : 'bg-muted-foreground/30'}`} />
+                    <span>Ready</span>
+                  </div>
+                </div>
+
+                {/* CTA Button */}
+                <div className="flex justify-center">
+                  <button
+                    disabled={!bothFilesSelected}
+                    className={`
+                      group relative px-10 py-4 rounded-xl font-display font-semibold text-base
+                      transition-all duration-300 flex items-center gap-3
+                      ${
+                        bothFilesSelected
+                          ? "bg-accent text-accent-foreground glow-accent hover:scale-[1.02] active:scale-[0.98]"
+                          : "bg-muted/50 text-muted-foreground cursor-not-allowed"
+                      }
+                    `}
+                  >
+                    <span>Continue to Column Mapping</span>
+                    <ArrowRight
+                      className={`w-4 h-4 transition-transform duration-300 ${
+                        bothFilesSelected ? "group-hover:translate-x-1" : ""
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
             </div>
-
-            {/* CTA Button */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: 0.6 }}
-              className="flex justify-center"
-            >
-              <button
-                disabled={!bothFilesSelected}
-                className={`
-                  group relative px-8 py-4 rounded-xl font-display font-semibold text-base
-                  transition-all duration-300 flex items-center gap-3
-                  ${
-                    bothFilesSelected
-                      ? "bg-accent text-accent-foreground glow-accent hover:scale-[1.02]"
-                      : "bg-muted text-muted-foreground cursor-not-allowed"
-                  }
-                `}
-              >
-                <span>Continue to Column Mapping</span>
-                <ArrowRight
-                  className={`w-4 h-4 transition-transform duration-300 ${
-                    bothFilesSelected ? "group-hover:translate-x-1" : ""
-                  }`}
-                />
-              </button>
-            </motion.div>
-          </div>
+          </motion.div>
         </section>
 
         {/* Divider */}
@@ -207,7 +247,7 @@ export default function Home() {
             </motion.div>
 
             {/* Features grid */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
               {[
                 {
                   icon: Zap,
@@ -258,21 +298,25 @@ export default function Home() {
                   whileInView={{ opacity: 1, y: 0 }}
                   viewport={{ once: true }}
                   transition={{ duration: 0.5, delay: feature.delay }}
-                  className="group relative bg-card rounded-xl p-6 border border-border/50 hover:border-accent/30 transition-colors duration-300"
+                  className="group relative"
                 >
-                  {/* Hover glow */}
-                  <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-accent/5 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+                  {/* Glow border container */}
+                  <div className="relative rounded-xl p-px bg-gradient-to-b from-accent/30 via-border/50 to-border/20 hover:from-accent/50 hover:via-accent/20 hover:to-border/30 transition-all duration-500">
+                    {/* Hover glow effect */}
+                    <div className="absolute -inset-1 bg-accent/10 rounded-xl blur-lg opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
 
-                  <div className="relative">
-                    <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center mb-4 group-hover:bg-accent/10 transition-colors duration-300">
-                      <feature.icon className="w-5 h-5 text-muted-foreground group-hover:text-accent transition-colors duration-300" />
+                    {/* Card content */}
+                    <div className="relative bg-gradient-to-b from-card to-card/80 rounded-xl p-6">
+                      <div className="w-10 h-10 rounded-lg bg-accent/10 border border-accent/20 flex items-center justify-center mb-4 group-hover:bg-accent/20 group-hover:border-accent/40 transition-all duration-300">
+                        <feature.icon className="w-5 h-5 text-accent/70 group-hover:text-accent transition-colors duration-300" />
+                      </div>
+                      <h3 className="font-display font-semibold mb-2 tracking-tight">
+                        {feature.title}
+                      </h3>
+                      <p className="text-sm text-muted-foreground leading-relaxed">
+                        {feature.description}
+                      </p>
                     </div>
-                    <h3 className="font-display font-semibold mb-2 tracking-tight">
-                      {feature.title}
-                    </h3>
-                    <p className="text-sm text-muted-foreground leading-relaxed">
-                      {feature.description}
-                    </p>
                   </div>
                 </motion.div>
               ))}
@@ -281,8 +325,11 @@ export default function Home() {
         </section>
 
         {/* How it works */}
-        <section className="py-20 px-6 bg-card/30">
-          <div className="container mx-auto max-w-5xl">
+        <section className="py-20 px-6 relative">
+          {/* Section background */}
+          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-accent/[0.02] to-transparent" />
+
+          <div className="container mx-auto max-w-5xl relative">
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               whileInView={{ opacity: 1, y: 0 }}
@@ -298,7 +345,7 @@ export default function Home() {
               </p>
             </motion.div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {[
                 {
                   step: "01",
@@ -325,24 +372,34 @@ export default function Home() {
                   whileInView={{ opacity: 1, y: 0 }}
                   viewport={{ once: true }}
                   transition={{ duration: 0.5, delay: i * 0.15 }}
-                  className="relative"
+                  className="group relative"
                 >
-                  {/* Connector line */}
-                  {i < 2 && (
-                    <div className="hidden md:block absolute top-8 left-full w-full h-px bg-gradient-to-r from-border via-border to-transparent z-0" />
-                  )}
+                  {/* Glow border container */}
+                  <div className="relative rounded-xl p-px bg-gradient-to-b from-accent/20 via-border/40 to-border/10 hover:from-accent/40 hover:via-accent/15 transition-all duration-500">
+                    {/* Hover glow */}
+                    <div className="absolute -inset-1 bg-accent/10 rounded-xl blur-lg opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
 
-                  <div className="relative z-10">
-                    <div className="font-mono text-5xl font-bold text-muted/50 mb-4">
-                      {item.step}
+                    {/* Card content */}
+                    <div className="relative bg-gradient-to-b from-card to-background rounded-xl p-6 h-full">
+                      {/* Step number */}
+                      <div className="font-mono text-4xl font-bold text-accent/20 group-hover:text-accent/40 transition-colors duration-300 mb-3">
+                        {item.step}
+                      </div>
+                      <h3 className="font-display font-semibold text-lg mb-2 tracking-tight">
+                        {item.title}
+                      </h3>
+                      <p className="text-sm text-muted-foreground leading-relaxed">
+                        {item.description}
+                      </p>
                     </div>
-                    <h3 className="font-display font-semibold text-lg mb-2">
-                      {item.title}
-                    </h3>
-                    <p className="text-sm text-muted-foreground leading-relaxed">
-                      {item.description}
-                    </p>
                   </div>
+
+                  {/* Connector arrow */}
+                  {i < 2 && (
+                    <div className="hidden md:flex absolute top-1/2 -right-3 transform -translate-y-1/2 z-10">
+                      <div className="w-6 h-px bg-gradient-to-r from-accent/40 to-accent/10" />
+                    </div>
+                  )}
                 </motion.div>
               ))}
             </div>
