@@ -1,0 +1,111 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    --primary: 222 47% 11%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 20% 55%;
+    --accent: 142 76% 46%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 222 47% 11%;
+    --radius: 0.5rem;
+
+    /* Semantic colors for discrepancies */
+    --missing: 0 84% 60%;
+    --mismatch: 38 92% 50%;
+    --matched: 142 76% 46%;
+  }
+
+  .dark {
+    /* Dark theme base */
+    --background: 222 47% 6%;
+    --foreground: 210 40% 96%;
+
+    /* Card/Surface */
+    --card: 222 47% 9%;
+    --card-foreground: 210 40% 96%;
+
+    --popover: 222 47% 9%;
+    --popover-foreground: 210 40% 96%;
+
+    /* Primary */
+    --primary: 142 76% 46%;
+    --primary-foreground: 0 0% 100%;
+
+    /* Secondary */
+    --secondary: 217 33% 17%;
+    --secondary-foreground: 210 40% 96%;
+
+    /* Accent - Use sparingly for CTAs and highlights */
+    --accent: 142 76% 46%;
+    --accent-foreground: 0 0% 100%;
+
+    /* Semantic colors for discrepancies */
+    --missing: 0 84% 60%;
+    --mismatch: 38 92% 50%;
+    --matched: 142 76% 46%;
+
+    /* Muted elements */
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 20% 55%;
+
+    /* Borders */
+    --border: 217 33% 17%;
+    --input: 217 33% 17%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 98%;
+
+    --ring: 142 76% 46%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  /* Tabular figures for numbers in tables */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer utilities {
+  /* Gradient mesh for hero section */
+  .gradient-mesh {
+    background: radial-gradient(at 40% 20%, hsla(142, 76%, 46%, 0.15) 0px, transparent 50%),
+                radial-gradient(at 80% 0%, hsla(222, 47%, 30%, 0.15) 0px, transparent 50%),
+                radial-gradient(at 0% 50%, hsla(142, 76%, 36%, 0.1) 0px, transparent 50%);
+  }
+
+  /* Glow effect for primary buttons */
+  .glow-accent {
+    box-shadow: 0 0 20px hsla(142, 76%, 46%, 0.3);
+  }
+
+  .glow-accent:hover {
+    box-shadow: 0 0 30px hsla(142, 76%, 46%, 0.5);
+  }
+}
