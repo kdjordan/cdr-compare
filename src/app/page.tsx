@@ -417,7 +417,7 @@ export default function Home() {
                 <span className="font-display">CDRReconcile</span>
               </div>
               <div className="text-xs text-muted-foreground font-mono">
-                Sample Build • December 2025
+                Demo Test Build • December 2025
               </div>
             </div>
           </div>
