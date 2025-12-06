@@ -60,7 +60,7 @@ export const SWITCH_PRESETS: SwitchPreset[] = [
       rate: "account_rate",
     },
     expectedColumns: ["src_number", "dst_number", "date", "account_billed_duration", "account_rate"],
-    durationUnit: "seconds",
+    durationUnit: "milliseconds",
     ratePrecision: 4,
   },
 ];

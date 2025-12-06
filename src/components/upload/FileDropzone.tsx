@@ -1,9 +1,7 @@
 "use client";
 
-import { useCallback, useState, useRef, useEffect } from "react";
+import { useCallback, useState, useId } from "react";
 import { Upload, FileSpreadsheet, Check, X, FileArchive } from "lucide-react";
-
-console.log("[FileDropzone] Module loaded");
 
 interface FileDropzoneProps {
   label: string;
@@ -24,12 +22,7 @@ export function FileDropzone({
 }: FileDropzoneProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    console.log("[FileDropzone] Component mounted, label:", label);
-    console.log("[FileDropzone] inputRef after mount:", inputRef.current);
-  }, [label]);
+  const inputId = useId();
 
   const validateFile = useCallback((file: File): boolean => {
     const extension = "." + file.name.split(".").pop()?.toLowerCase();
@@ -59,32 +52,15 @@ export function FileDropzone({
 
   const handleFileInput = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      console.log("[FileDropzone] handleFileInput called");
-      console.log("[FileDropzone] e.target.files:", e.target.files);
       const file = e.target.files?.[0];
-      console.log("[FileDropzone] Selected file:", file?.name, file?.size);
       if (file && validateFile(file)) {
-        console.log("[FileDropzone] File validated, calling onFileSelect");
         onFileSelect(file);
-        console.log("[FileDropzone] onFileSelect completed");
       }
       // Reset input so same file can be selected again
-      if (inputRef.current) {
-        inputRef.current.value = "";
-      }
+      e.target.value = "";
     },
     [onFileSelect, validateFile]
   );
-
-  const handleClick = useCallback(() => {
-    console.log("[FileDropzone] handleClick called");
-    console.log("[FileDropzone] inputRef.current:", inputRef.current);
-    if (inputRef.current) {
-      console.log("[FileDropzone] About to call input.click()");
-      inputRef.current.click();
-      console.log("[FileDropzone] input.click() completed");
-    }
-  }, []);
 
   const formatFileSize = (bytes: number): string => {
     if (bytes < 1024) return bytes + " B";
@@ -104,15 +80,6 @@ export function FileDropzone({
           </h3>
           <p className="text-sm text-muted-foreground mt-0.5">{sublabel}</p>
         </div>
-
-        {/* Hidden file input */}
-        <input
-          ref={inputRef}
-          type="file"
-          accept=".csv,.xlsx,.xls,.zip"
-          onChange={handleFileInput}
-          style={{ display: "none" }}
-        />
 
         {selectedFile ? (
           /* File selected state */
@@ -143,17 +110,24 @@ export function FileDropzone({
             </div>
           </div>
         ) : (
-          /* Upload dropzone state */
-          <div
-            onClick={handleClick}
+          /* Upload dropzone state - using label for native file input triggering */
+          <label
+            htmlFor={inputId}
             onDrop={handleDrop}
             onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
             onDragLeave={(e) => { e.preventDefault(); setIsDragging(false); }}
             className={`
-              rounded-lg cursor-pointer transition-all duration-300 border-2 border-dashed
+              block rounded-lg cursor-pointer transition-all duration-300 border-2 border-dashed
               ${isDragging ? "border-accent bg-accent/5" : "border-border bg-muted/20 hover:bg-muted/30 hover:border-accent/50"}
             `}
           >
+            <input
+              id={inputId}
+              type="file"
+              accept=".csv,.xlsx,.xls,.zip"
+              onChange={handleFileInput}
+              className="sr-only"
+            />
             <div className="p-10 flex flex-col items-center justify-center text-center">
               <div className={`w-14 h-14 rounded-xl flex items-center justify-center mb-4 ${isDragging ? "bg-accent/20 text-accent" : "bg-muted text-muted-foreground"}`}>
                 <Upload className="w-6 h-6" />
@@ -165,7 +139,7 @@ export function FileDropzone({
                 CSV, XLSX, or ZIP up to 500MB
               </p>
             </div>
-          </div>
+          </label>
         )}
 
         {/* Error message */}

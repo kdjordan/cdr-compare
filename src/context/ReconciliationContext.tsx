@@ -34,7 +34,7 @@ export const DEFAULT_FILE_SETTINGS: FileSettings = {
 };
 
 export interface Discrepancy {
-  type: "missing_in_a" | "missing_in_b" | "duration_mismatch" | "rate_mismatch" | "cost_mismatch";
+  type: "missing_in_a" | "missing_in_b" | "zero_duration_in_a" | "zero_duration_in_b" | "duration_mismatch" | "rate_mismatch" | "cost_mismatch";
   a_number: string;
   b_number: string;
   seize_time: number | null;
@@ -50,17 +50,37 @@ export interface Discrepancy {
   source_index_b?: number;
 }
 
-export interface ReconciliationSummary {
-  totalRecordsA: number;
-  totalRecordsB: number;
-  matchedRecords: number;
+export interface ImpactBreakdown {
   missingInYours: number;
   missingInProvider: number;
   durationMismatches: number;
   rateMismatches: number;
   costMismatches: number;
+}
+
+export interface ReconciliationSummary {
+  totalRecordsA: number;
+  totalRecordsB: number;
+  matchedRecords: number;
+  // TOTAL BILLED - key numbers for invoice comparison
+  yourTotalBilled: number;
+  providerTotalBilled: number;
+  billingDifference: number;
+  // Missing record counts
+  missingInYours: number;
+  missingInProvider: number;
+  // Zero-duration breakdown (unanswered attempts vs billed calls)
+  zeroDurationInYours: number;
+  zeroDurationInProvider: number;
+  billedMissingInYours: number;
+  billedMissingInProvider: number;
+  // Mismatch counts
+  durationMismatches: number;
+  rateMismatches: number;
+  costMismatches: number;
   totalDiscrepancies: number;
   monetaryImpact: number;
+  impactBreakdown: ImpactBreakdown;
 }
 
 export interface ReconciliationResults {

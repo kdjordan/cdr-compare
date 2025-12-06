@@ -3,9 +3,9 @@
 ## What We're Building
 A CDR (Call Detail Record) reconciliation tool that compares call records from two different sources (e.g., your switch vs provider's switch) to find billing discrepancies.
 
-## Current Status: WORKING
+## Current Status: WORKING + IMPROVED
 
-The core matching and cost comparison is now functional.
+Core matching, cost comparison, and results display are functional with recent improvements.
 
 ### Latest Test Results
 - **783,198** records in File A (Veriswitch)
@@ -13,65 +13,98 @@ The core matching and cost comparison is now functional.
 - **765,979** matched records (97.8% match rate)
 - Discrepancies properly detected and displayed
 
-### Recently Completed
+---
 
-1. **Fixed matching issues:**
-   - Updated Veriswitch preset: `b_number` now maps to `dialed` instead of `lrn` (LRN was often empty)
-   - Fixed timestamp parsing for US date format (`M/D/YYYY HH:mm`) - now treated as UTC
-   - Increased time tolerance to 60 seconds (SipNav only has minute-level precision)
+## Recently Completed (This Session)
 
-2. **Implemented proper billing calculation:**
-   - VoIP uses 6-second increment billing
-   - `billingIncrements = ceil(durationSeconds / 6)`
-   - `cost = increments × (rate / 10)` (rate is per-minute, so /10 for 6-second increment)
-   - Example: 13 seconds = 3 increments, cost = 3 × (rate/10)
+### 1. Fixed FileDropzone Browser Crash
+- **Problem:** Clicking dropzone to upload file crashed browser
+- **Cause:** Using `ref.click()` to trigger file input programmatically
+- **Fix:** Switched to native `<label htmlFor={inputId}>` pattern
+- **Note:** Added to CLAUDE.md to prevent recurrence
 
-3. **Updated results display:**
-   - Shows "Your Cost" and "Provider Cost" columns
-   - Shows cost difference (positive = you're overpaying)
-   - Added "cost_mismatch" discrepancy type
+### 2. Zero-Duration Record Separation
+- **Problem:** 17,000+ "Missing in Provider" records were all 0-second calls cluttering results
+- **Insight:** One CDR logs all attempts, other only logs billed calls - not a billing discrepancy
+- **Solution:**
+  - New types: `zero_duration_in_a`, `zero_duration_in_b`
+  - Separate from real billing issues (`missing_in_a`, `missing_in_b`)
+  - New summary fields: `zeroDurationInYours`, `zeroDurationInProvider`, `billedMissingInYours`, `billedMissingInProvider`
 
-4. **UI consistency:**
-   - All primary buttons use outline style: `bg-accent/10 border-accent/30 text-accent`
-   - Rate precision default changed to 4 digits
+### 3. Analysis Synopsis Section
+- Added collapsible "Analysis Synopsis" on results page
+- Explains net impact in plain language
+- Shows impact breakdown by category (missing calls, duration/rate differences)
+- Explains zero-duration records are unanswered attempts
 
-### Remaining Work
+### 4. Improved Filters
+- New "Billing Issues" filter (default) - shows only real cost discrepancies
+- New "Zero Duration" filter - view unanswered attempts separately
+- Toggle: "Hide zero-duration" when viewing "All"
+- Scrollable table with 500px max height
 
-#### 1. Pass file settings to API (NOT YET IMPLEMENTED)
-The UI has settings but they're not being sent to the API:
-```typescript
-interface FileSettings {
-  durationUnit: "seconds" | "milliseconds";
-  ratePrecision: 4 | 5 | 6;
-}
-```
+### 5. Impact Breakdown in API
+- `impactBreakdown` object shows monetary impact by category
+- Helps users understand WHERE the discrepancy cost comes from
 
-Need to:
-- Pass `settingsA` and `settingsB` in FormData to `/api/process`
-- Update `normalizeDuration()` to convert milliseconds → seconds if needed
-- Use ratePrecision for rate comparison tolerance
+---
 
-#### 2. Test the new cost calculations
-- Run a comparison and verify costs are calculated correctly
-- Verify the 6-second billing logic is working as expected
+## Next Task: Source Line Export
+
+### Problem
+Users can't trace discrepancies back to original files - `source_index` is captured but not exposed.
+
+### Implementation
+See: `.claude/docs/source-line-implementation.md`
+
+**Files to modify:**
+1. `/src/app/api/export/route.ts` - Add source row columns to CSV
+2. `/src/app/results/page.tsx` - Display source rows in table
+
+---
+
+## Future Enhancements (Documented)
+
+See: `.claude/docs/enhancements.md`
+
+1. **Configurable Time Tolerance** - Let users adjust 10s-300s
+2. **Billing Increment Model** - Support 1/1, 6/6, 30/6, 60/60
+3. **Timezone Offset** - Per-file timezone setting
+4. **Pattern Detection** - Detect systematic issues
+5. **Data Quality Warnings** - Warn about bad data before processing
+
+---
 
 ## Key Files
 
 ### API Processing
-- `/src/app/api/process/route.ts` - Main matching and cost calculation logic
-  - `calculateBillingIncrements()` - 6-second increment calculation
-  - `calculateCallCost()` - Cost using increments × (rate/10)
+- `/src/app/api/process/route.ts` - Main matching and cost calculation
+- `/src/app/api/export/route.ts` - CSV export
+
+### Results Display
+- `/src/app/results/page.tsx` - Results with synopsis, filters, table
+
+### Context & Types
+- `/src/context/ReconciliationContext.tsx` - State management, type definitions
 
 ### Presets
 - `/src/lib/presets.ts` - Switch format definitions
-  - Veriswitch: `a_number: ani_out`, `b_number: dialed`, `seize_time: seized_time`
-  - SipNav: `a_number: src_number`, `b_number: dst_number`, `seize_time: date`
 
-### Context
-- `/src/context/ReconciliationContext.tsx` - State management, type definitions
+---
 
-### Results Display
-- `/src/app/results/page.tsx` - Shows discrepancies with cost columns
+## Discrepancy Types
+
+| Type | Meaning |
+|------|---------|
+| `missing_in_a` | Provider has billed call you don't (they're billing you) |
+| `missing_in_b` | You have billed call they don't (you're not being billed) |
+| `zero_duration_in_a` | Provider has 0-sec call you don't (unanswered attempt) |
+| `zero_duration_in_b` | You have 0-sec call they don't (unanswered attempt) |
+| `duration_mismatch` | Same call, different duration |
+| `rate_mismatch` | Same call, different rate |
+| `cost_mismatch` | Both duration and rate differ |
+
+---
 
 ## Technical Notes
 
@@ -84,23 +117,12 @@ function calculateBillingIncrements(durationSeconds: number): number {
 
 function calculateCallCost(durationSeconds: number, ratePerMinute: number): number {
   const increments = calculateBillingIncrements(durationSeconds);
-  const costPerIncrement = ratePerMinute / 10; // 10 increments per minute
+  const costPerIncrement = ratePerMinute / 10;
   return increments * costPerIncrement;
 }
 ```
 
 ### Matching Algorithm
-1. Join on `a_number + b_number`
-2. Time tolerance: 60 seconds (for minute-level precision systems)
+1. Join on `a_number + b_number` (normalized)
+2. Time tolerance: 60 seconds
 3. 1-to-1 matching: Each record matches only once, preferring closest time
-
-### Discrepancy Types
-- `missing_in_a` - Provider has record you don't (they're billing you)
-- `missing_in_b` - You have record they don't (you're not being billed)
-- `duration_mismatch` - Same call, different duration
-- `rate_mismatch` - Same call, different rate
-- `cost_mismatch` - Both duration and rate differ
-
-### Timestamp Formats
-- Veriswitch: `2025-11-07 23:59:35+00` (ISO with timezone)
-- SipNav: `11/7/2025 16:55` (US format, no timezone - treated as UTC)

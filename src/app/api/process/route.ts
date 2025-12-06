@@ -515,8 +515,9 @@ export async function POST(request: NextRequest) {
     console.log(`Unmatched in A: ${unmatchedA.length}, Unmatched in B: ${unmatchedB.length}`);
 
     // Build discrepancies list
+    // Types now include zero_duration variants to separate unanswered attempts from real billing issues
     interface Discrepancy {
-      type: "missing_in_a" | "missing_in_b" | "duration_mismatch" | "rate_mismatch" | "cost_mismatch";
+      type: "missing_in_a" | "missing_in_b" | "zero_duration_in_a" | "zero_duration_in_b" | "duration_mismatch" | "rate_mismatch" | "cost_mismatch";
       a_number: string;
       b_number: string;
       seize_time: number | null;
@@ -533,11 +534,25 @@ export async function POST(request: NextRequest) {
     }
     const discrepancies: Discrepancy[] = [];
 
+    // Track zero-duration stats for synopsis
+    let zeroDurationInA = 0; // Your records with 0 duration not in provider
+    let zeroDurationInB = 0; // Provider records with 0 duration not in yours
+    let billedMissingInA = 0; // Provider has billed calls you don't have (real issue)
+    let billedMissingInB = 0; // You have billed calls provider doesn't have (real issue)
+
     // Missing in B (You have it, provider doesn't)
     for (const record of unmatchedA) {
       const yourCost = calculateCallCost(record.billed_duration, record.rate);
+      const isZeroDuration = record.billed_duration === 0;
+
+      if (isZeroDuration) {
+        zeroDurationInA++;
+      } else {
+        billedMissingInB++;
+      }
+
       discrepancies.push({
-        type: "missing_in_b",
+        type: isZeroDuration ? "zero_duration_in_b" : "missing_in_b",
         a_number: record.a_number,
         b_number: record.b_number,
         seize_time: record.seize_time,
@@ -555,8 +570,16 @@ export async function POST(request: NextRequest) {
     // Missing in A (Provider has it, you don't)
     for (const record of unmatchedB) {
       const providerCost = calculateCallCost(record.billed_duration, record.rate);
+      const isZeroDuration = record.billed_duration === 0;
+
+      if (isZeroDuration) {
+        zeroDurationInB++;
+      } else {
+        billedMissingInA++;
+      }
+
       discrepancies.push({
-        type: "missing_in_a",
+        type: isZeroDuration ? "zero_duration_in_a" : "missing_in_a",
         a_number: record.a_number,
         b_number: record.b_number,
         seize_time: record.seize_time,
@@ -608,19 +631,64 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Calculate TOTAL billed amounts from each CDR (the key numbers for invoice comparison)
+    // Your total = sum of all calls in your CDR
+    let yourTotalBilled = 0;
+    for (const record of allRecordsA) {
+      yourTotalBilled += calculateCallCost(record.billed_duration, record.rate);
+    }
+
+    // Provider total = sum of all calls in provider CDR
+    let providerTotalBilled = 0;
+    for (const record of allRecordsB) {
+      providerTotalBilled += calculateCallCost(record.billed_duration, record.rate);
+    }
+
+    // Calculate cost breakdowns for synopsis
+    const missingInAWithCost = discrepancies.filter(d => d.type === "missing_in_a");
+    const missingInBWithCost = discrepancies.filter(d => d.type === "missing_in_b");
+    const durationMismatches = discrepancies.filter(d => d.type === "duration_mismatch");
+    const rateMismatches = discrepancies.filter(d => d.type === "rate_mismatch");
+    const costMismatches = discrepancies.filter(d => d.type === "cost_mismatch");
+
+    // Calculate monetary impact by category
+    const impactFromMissingInA = missingInAWithCost.reduce((sum, d) => sum + (d.cost_difference || 0), 0);
+    const impactFromMissingInB = missingInBWithCost.reduce((sum, d) => sum + (d.cost_difference || 0), 0);
+    const impactFromDuration = durationMismatches.reduce((sum, d) => sum + (d.cost_difference || 0), 0);
+    const impactFromRate = rateMismatches.reduce((sum, d) => sum + (d.cost_difference || 0), 0);
+    const impactFromCost = costMismatches.reduce((sum, d) => sum + (d.cost_difference || 0), 0);
+
     // Calculate summary
     const summary = {
       totalRecordsA: dataA.length,
       totalRecordsB: dataB.length,
       matchedRecords: matches.length,
+      // TOTAL BILLED - key numbers for invoice comparison
+      yourTotalBilled: Math.round(yourTotalBilled * 100) / 100,
+      providerTotalBilled: Math.round(providerTotalBilled * 100) / 100,
+      billingDifference: Math.round((yourTotalBilled - providerTotalBilled) * 100) / 100,
+      // Original totals (includes zero-duration)
       missingInYours: unmatchedB.length,
       missingInProvider: unmatchedA.length,
-      durationMismatches: discrepancies.filter((d) => d.type === "duration_mismatch").length,
-      rateMismatches: discrepancies.filter((d) => d.type === "rate_mismatch").length,
-      costMismatches: discrepancies.filter((d) => d.type === "cost_mismatch").length,
+      // New: separated by billing relevance
+      zeroDurationInYours: zeroDurationInA, // Your 0-sec calls not in provider (likely attempts)
+      zeroDurationInProvider: zeroDurationInB, // Provider 0-sec calls not in yours (likely attempts)
+      billedMissingInYours: billedMissingInA, // Provider has billed calls you don't - REAL ISSUE
+      billedMissingInProvider: billedMissingInB, // You have billed calls they don't - REAL ISSUE
+      // Mismatch counts
+      durationMismatches: durationMismatches.length,
+      rateMismatches: rateMismatches.length,
+      costMismatches: costMismatches.length,
       totalDiscrepancies: discrepancies.length,
-      // Monetary impact: sum of all cost differences (positive = you're overpaying, negative = underpaying)
+      // Monetary impact breakdown (from discrepancies analysis)
       monetaryImpact: Math.round(discrepancies.reduce((sum, d) => sum + (d.cost_difference || 0), 0) * 100) / 100,
+      impactBreakdown: {
+        missingInYours: Math.round(impactFromMissingInA * 100) / 100, // Negative = provider billing you
+        missingInProvider: Math.round(impactFromMissingInB * 100) / 100, // Positive = you have extra
+        durationMismatches: Math.round(impactFromDuration * 100) / 100,
+        rateMismatches: Math.round(impactFromRate * 100) / 100,
+        costMismatches: Math.round(impactFromCost * 100) / 100,
+      },
     };
 
     console.log("Summary:", summary);
@@ -628,13 +696,73 @@ export async function POST(request: NextRequest) {
     // Cleanup
     await cleanup();
 
+    // Group discrepancies by type and take a sample from each category
+    // This ensures all categories are represented in the UI
+    const MAX_TOTAL = 5000;
+    const byType: Record<string, Discrepancy[]> = {};
+
+    for (const d of discrepancies) {
+      if (!byType[d.type]) byType[d.type] = [];
+      byType[d.type].push(d);
+    }
+
+    // Sort each category by absolute cost difference (biggest impact first)
+    for (const type in byType) {
+      byType[type].sort((a, b) => Math.abs(b.cost_difference) - Math.abs(a.cost_difference));
+    }
+
+    // Calculate how many to take from each category proportionally
+    // But ensure we take at least some from each non-empty category
+    const types = Object.keys(byType);
+    const totalCount = discrepancies.length;
+    const sampledDiscrepancies: Discrepancy[] = [];
+
+    if (totalCount <= MAX_TOTAL) {
+      // Return all if under limit
+      sampledDiscrepancies.push(...discrepancies);
+    } else {
+      // Take proportional sample, minimum 100 per category (or all if less than 100)
+      const minPerCategory = 100;
+      const reservedSlots = types.length * minPerCategory;
+      const remainingSlots = MAX_TOTAL - Math.min(reservedSlots, MAX_TOTAL * 0.5);
+
+      for (const type of types) {
+        const categoryItems = byType[type];
+        const proportion = categoryItems.length / totalCount;
+        const proportionalCount = Math.floor(remainingSlots * proportion);
+        const takeCount = Math.min(
+          categoryItems.length,
+          Math.max(minPerCategory, proportionalCount)
+        );
+        sampledDiscrepancies.push(...categoryItems.slice(0, takeCount));
+      }
+    }
+
+    // Sort final result by type then cost for consistent display
+    const typeOrder: Record<string, number> = {
+      missing_in_a: 1,
+      duration_mismatch: 2,
+      rate_mismatch: 3,
+      cost_mismatch: 4,
+      missing_in_b: 5,
+      zero_duration_in_a: 6,
+      zero_duration_in_b: 7,
+    };
+
+    sampledDiscrepancies.sort((a, b) => {
+      const orderA = typeOrder[a.type] || 99;
+      const orderB = typeOrder[b.type] || 99;
+      if (orderA !== orderB) return orderA - orderB;
+      return Math.abs(b.cost_difference) - Math.abs(a.cost_difference);
+    });
+
     // Return results
     return NextResponse.json({
       success: true,
       jobId,
       summary,
-      discrepancies: discrepancies.slice(0, 1000),
-      hasMore: discrepancies.length > 1000,
+      discrepancies: sampledDiscrepancies,
+      hasMore: discrepancies.length > sampledDiscrepancies.length,
       totalDiscrepancyCount: discrepancies.length,
     });
   } catch (error) {
