@@ -46,15 +46,15 @@
     --popover: 224 30% 7%;
     --popover-foreground: 210 40% 98%;
 
-    /* Primary - vibrant emerald */
-    --primary: 156 72% 48%;
+    /* Primary - darker emerald for buttons */
+    --primary: 158 64% 32%;
     --primary-foreground: 0 0% 100%;
 
     /* Secondary */
     --secondary: 220 25% 12%;
     --secondary-foreground: 210 40% 98%;
 
-    /* Accent */
+    /* Accent - lighter for highlights/text */
     --accent: 156 72% 48%;
     --accent-foreground: 0 0% 100%;
 

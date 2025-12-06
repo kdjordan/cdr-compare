@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import {
   ArrowRight,
@@ -10,15 +11,147 @@ import {
   Shield,
   Clock,
   Database,
+  Loader2,
+  Check,
 } from "lucide-react";
 import { FileDropzone } from "@/components/upload/FileDropzone";
 import { Ripple } from "@/components/ui/ripple";
+import { useReconciliation, ColumnMapping, FilePreview, FileSettings } from "@/context/ReconciliationContext";
+import { parseFile } from "@/lib/parser";
+import { ColumnMappingModal } from "@/components/mapping/ColumnMappingModal";
+
+type UploadStep = "file_a" | "mapping_a" | "file_b" | "mapping_b" | "ready";
 
 export default function Home() {
-  const [fileA, setFileA] = useState<File | null>(null);
-  const [fileB, setFileB] = useState<File | null>(null);
+  const router = useRouter();
+  const { setFileA, setFileB, setMappingA, setMappingB, setSettingsA, setSettingsB, mappingA, mappingB, fileA, fileB } = useReconciliation();
 
-  const bothFilesSelected = fileA && fileB;
+  const [step, setStep] = useState<UploadStep>("file_a");
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // File A state
+  const [localFileA, setLocalFileA] = useState<File | null>(null);
+  const [parsedFileA, setParsedFileA] = useState<FilePreview | null>(null);
+  const [localMappingA, setLocalMappingA] = useState<ColumnMapping | null>(null);
+
+  // File B state
+  const [localFileB, setLocalFileB] = useState<File | null>(null);
+  const [parsedFileB, setParsedFileB] = useState<FilePreview | null>(null);
+  const [localMappingB, setLocalMappingB] = useState<ColumnMapping | null>(null);
+
+  // Settings state
+  const [localSettingsA, setLocalSettingsA] = useState<FileSettings | null>(null);
+  const [localSettingsB, setLocalSettingsB] = useState<FileSettings | null>(null);
+
+  // Navigation state - wait for context to update before navigating
+  const [pendingVerify, setPendingVerify] = useState(false);
+
+  useEffect(() => {
+    if (pendingVerify && fileA && fileB && mappingA && mappingB) {
+      setPendingVerify(false);
+      router.push("/mapping/verify");
+    }
+  }, [pendingVerify, fileA, fileB, mappingA, mappingB, router]);
+
+  // Handle File A upload
+  const handleFileASelect = async (file: File) => {
+    console.log("[Page] handleFileASelect called with:", file.name);
+    setLocalFileA(file);
+    setIsProcessing(true);
+    setError(null);
+
+    try {
+      console.log("[Page] About to parse file");
+      const parsed = await parseFile(file);
+      console.log("[Page] File parsed successfully:", parsed.headers.length, "columns");
+      setParsedFileA({
+        file,
+        headers: parsed.headers,
+        sampleRows: parsed.sampleRows,
+        totalRows: parsed.totalRows,
+      });
+      setStep("mapping_a");
+    } catch (err) {
+      console.error("[Page] Parse error:", err);
+      setError(err instanceof Error ? err.message : "Failed to parse file");
+      setLocalFileA(null);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Handle File A mapping confirmation
+  const handleMappingAConfirm = (mapping: ColumnMapping, settings: FileSettings) => {
+    setLocalMappingA(mapping);
+    setLocalSettingsA(settings);
+    setStep("file_b");
+  };
+
+  // Handle File B upload
+  const handleFileBSelect = async (file: File) => {
+    setLocalFileB(file);
+    setIsProcessing(true);
+    setError(null);
+
+    try {
+      const parsed = await parseFile(file);
+      setParsedFileB({
+        file,
+        headers: parsed.headers,
+        sampleRows: parsed.sampleRows,
+        totalRows: parsed.totalRows,
+      });
+      setStep("mapping_b");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to parse file");
+      setLocalFileB(null);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Handle File B mapping confirmation
+  const handleMappingBConfirm = (mapping: ColumnMapping, settings: FileSettings) => {
+    setLocalMappingB(mapping);
+    setLocalSettingsB(settings);
+    setStep("ready");
+  };
+
+  // Handle start processing - go to verification first
+  const handleStartProcessing = () => {
+    if (!parsedFileA || !parsedFileB || !localMappingA || !localMappingB || !localSettingsA || !localSettingsB) return;
+
+    setFileA(parsedFileA);
+    setFileB(parsedFileB);
+    setMappingA(localMappingA);
+    setMappingB(localMappingB);
+    setSettingsA(localSettingsA);
+    setSettingsB(localSettingsB);
+    setPendingVerify(true);
+  };
+
+  // Reset file A and start over
+  const handleClearFileA = () => {
+    setLocalFileA(null);
+    setParsedFileA(null);
+    setLocalMappingA(null);
+    setLocalFileB(null);
+    setParsedFileB(null);
+    setLocalMappingB(null);
+    setStep("file_a");
+  };
+
+  // Reset file B
+  const handleClearFileB = () => {
+    setLocalFileB(null);
+    setParsedFileB(null);
+    setLocalMappingB(null);
+    setStep("file_b");
+  };
+
+  const isFileAComplete = step !== "file_a" && step !== "mapping_a";
+  const isFileBComplete = step === "ready";
 
   return (
     <main className="min-h-screen relative overflow-hidden">
@@ -153,73 +286,180 @@ export default function Home() {
                     Start Your Reconciliation
                   </h2>
                   <p className="text-muted-foreground text-sm">
-                    Upload both files to begin comparing records
+                    Upload and map each file, then compare
                   </p>
                 </div>
 
-                {/* Upload grid */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-                  <FileDropzone
-                    label="Your CDRs"
-                    sublabel="Internal call detail records"
-                    selectedFile={fileA}
-                    onFileSelect={setFileA}
-                    onClear={() => setFileA(null)}
-                  />
-
-                  <FileDropzone
-                    label="Provider CDRs"
-                    sublabel="Counterparty records to compare"
-                    selectedFile={fileB}
-                    onFileSelect={setFileB}
-                    onClear={() => setFileB(null)}
-                  />
-                </div>
-
-                {/* Progress indicator */}
-                <div className="flex items-center justify-center gap-3 mb-6">
-                  <div className={`flex items-center gap-2 text-sm ${fileA ? 'text-accent' : 'text-muted-foreground'}`}>
-                    <div className={`w-2 h-2 rounded-full ${fileA ? 'bg-accent' : 'bg-muted-foreground/30'}`} />
+                {/* Progress stepper */}
+                <div className="flex items-center justify-center gap-2 mb-8">
+                  {/* Step 1: Your CDRs */}
+                  <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm transition-colors ${
+                    isFileAComplete ? 'bg-accent/20 text-accent' : step === 'file_a' || step === 'mapping_a' ? 'bg-accent/10 text-accent' : 'bg-muted/50 text-muted-foreground'
+                  }`}>
+                    {isFileAComplete ? (
+                      <Check className="w-3.5 h-3.5" />
+                    ) : (
+                      <div className="w-3.5 h-3.5 rounded-full border-2 border-current flex items-center justify-center text-[10px] font-bold">1</div>
+                    )}
                     <span>Your CDRs</span>
                   </div>
-                  <div className="w-8 h-px bg-border" />
-                  <div className={`flex items-center gap-2 text-sm ${fileB ? 'text-accent' : 'text-muted-foreground'}`}>
-                    <div className={`w-2 h-2 rounded-full ${fileB ? 'bg-accent' : 'bg-muted-foreground/30'}`} />
+
+                  <div className={`w-8 h-px ${isFileAComplete ? 'bg-accent' : 'bg-border'}`} />
+
+                  {/* Step 2: Provider CDRs */}
+                  <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm transition-colors ${
+                    isFileBComplete ? 'bg-accent/20 text-accent' : step === 'file_b' || step === 'mapping_b' ? 'bg-accent/10 text-accent' : 'bg-muted/50 text-muted-foreground'
+                  }`}>
+                    {isFileBComplete ? (
+                      <Check className="w-3.5 h-3.5" />
+                    ) : (
+                      <div className="w-3.5 h-3.5 rounded-full border-2 border-current flex items-center justify-center text-[10px] font-bold">2</div>
+                    )}
                     <span>Provider CDRs</span>
                   </div>
-                  <div className="w-8 h-px bg-border" />
-                  <div className={`flex items-center gap-2 text-sm ${bothFilesSelected ? 'text-accent' : 'text-muted-foreground'}`}>
-                    <div className={`w-2 h-2 rounded-full ${bothFilesSelected ? 'bg-accent' : 'bg-muted-foreground/30'}`} />
-                    <span>Ready</span>
+
+                  <div className={`w-8 h-px ${isFileBComplete ? 'bg-accent' : 'bg-border'}`} />
+
+                  {/* Step 3: Compare */}
+                  <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm transition-colors ${
+                    step === 'ready' ? 'bg-accent/10 text-accent' : 'bg-muted/50 text-muted-foreground'
+                  }`}>
+                    <div className="w-3.5 h-3.5 rounded-full border-2 border-current flex items-center justify-center text-[10px] font-bold">3</div>
+                    <span>Compare</span>
                   </div>
                 </div>
 
-                {/* CTA Button */}
-                <div className="flex justify-center">
-                  <button
-                    disabled={!bothFilesSelected}
-                    className={`
-                      group relative px-10 py-4 rounded-xl font-display font-semibold text-base
-                      transition-all duration-300 flex items-center gap-3
-                      ${
-                        bothFilesSelected
-                          ? "bg-accent text-accent-foreground glow-accent hover:scale-[1.02] active:scale-[0.98]"
-                          : "bg-muted/50 text-muted-foreground cursor-not-allowed"
-                      }
-                    `}
-                  >
-                    <span>Continue to Column Mapping</span>
-                    <ArrowRight
-                      className={`w-4 h-4 transition-transform duration-300 ${
-                        bothFilesSelected ? "group-hover:translate-x-1" : ""
-                      }`}
+                {/* Dynamic upload area */}
+                <div className="space-y-6 mb-8">
+                  {/* File A section */}
+                  {!isFileAComplete ? (
+                    <FileDropzone
+                      label="Your CDRs"
+                      sublabel="Internal call detail records"
+                      selectedFile={localFileA}
+                      onFileSelect={handleFileASelect}
+                      onClear={handleClearFileA}
                     />
-                  </button>
+                  ) : (
+                    <div className="flex items-center justify-between p-4 rounded-xl bg-accent/5 border border-accent/20">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center">
+                          <Check className="w-5 h-5 text-accent" />
+                        </div>
+                        <div>
+                          <p className="font-medium text-sm">Your CDRs</p>
+                          <p className="text-xs text-muted-foreground font-mono">{localFileA?.name}</p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={handleClearFileA}
+                        className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        Change
+                      </button>
+                    </div>
+                  )}
+
+                  {/* File B section - only show after File A is complete */}
+                  {isFileAComplete && (
+                    <>
+                      {!isFileBComplete ? (
+                        <motion.div
+                          initial={{ opacity: 0, y: 20 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.3 }}
+                        >
+                          <FileDropzone
+                            label="Provider CDRs"
+                            sublabel="Counterparty records to compare"
+                            selectedFile={localFileB}
+                            onFileSelect={handleFileBSelect}
+                            onClear={handleClearFileB}
+                          />
+                        </motion.div>
+                      ) : (
+                        <div className="flex items-center justify-between p-4 rounded-xl bg-accent/5 border border-accent/20">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center">
+                              <Check className="w-5 h-5 text-accent" />
+                            </div>
+                            <div>
+                              <p className="font-medium text-sm">Provider CDRs</p>
+                              <p className="text-xs text-muted-foreground font-mono">{localFileB?.name}</p>
+                            </div>
+                          </div>
+                          <button
+                            onClick={handleClearFileB}
+                            className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            Change
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
+
+                {/* Error message */}
+                {error && (
+                  <div className="text-center text-sm text-destructive mb-4">
+                    {error}
+                  </div>
+                )}
+
+                {/* Processing indicator */}
+                {isProcessing && (
+                  <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground mb-4">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Parsing file...</span>
+                  </div>
+                )}
+
+                {/* CTA Button - only show when ready */}
+                {step === 'ready' && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="flex justify-center"
+                  >
+                    <button
+                      onClick={handleStartProcessing}
+                      className="group relative px-10 py-4 rounded-xl font-display font-semibold text-base border bg-accent/10 border-accent/30 text-accent hover:bg-accent/20 transition-all duration-300 flex items-center gap-3"
+                    >
+                      <span>Start Comparison</span>
+                      <ArrowRight className="w-4 h-4 transition-transform duration-300 group-hover:translate-x-1" />
+                    </button>
+                  </motion.div>
+                )}
               </div>
             </div>
           </motion.div>
         </section>
+
+        {/* Column Mapping Modals */}
+        {parsedFileA && (
+          <ColumnMappingModal
+            isOpen={step === "mapping_a"}
+            onClose={handleClearFileA}
+            onConfirm={handleMappingAConfirm}
+            fileName={parsedFileA.file.name}
+            headers={parsedFileA.headers}
+            sampleRows={parsedFileA.sampleRows}
+            fileLabel="Your CDRs"
+          />
+        )}
+
+        {parsedFileB && (
+          <ColumnMappingModal
+            isOpen={step === "mapping_b"}
+            onClose={handleClearFileB}
+            onConfirm={handleMappingBConfirm}
+            fileName={parsedFileB.file.name}
+            headers={parsedFileB.headers}
+            sampleRows={parsedFileB.sampleRows}
+            fileLabel="Provider CDRs"
+          />
+        )}
 
         {/* Divider */}
         <div className="container mx-auto max-w-5xl px-6">

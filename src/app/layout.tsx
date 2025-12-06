@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { ReconciliationProvider } from "@/context/ReconciliationContext";
 
 export const metadata: Metadata = {
   title: "CDR Reconciliation Tool",
@@ -14,7 +15,9 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body className="font-sans antialiased">
-        {children}
+        <ReconciliationProvider>
+          {children}
+        </ReconciliationProvider>
       </body>
     </html>
   );

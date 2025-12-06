@@ -25,19 +25,21 @@
     "framer-motion": "^12.23.24",
     "jszip": "^3.10.1",
     "lucide-react": "^0.555.0",
-    "next": "^16.0.6",
+    "next": "^16.0.7",
     "papaparse": "^5.5.3",
     "postcss": "^8.5.6",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1",
+    "read-excel-file": "^6.0.1",
     "tailwind-merge": "^3.4.0",
     "tailwindcss-animate": "^1.0.7",
     "typescript": "^5.9.3",
-    "xlsx": "^0.18.5"
+    "uuid": "^13.0.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/papaparse": "^5.5.0",
+    "@types/uuid": "^10.0.0",
     "tailwindcss": "^3.4.18"
   }
 }

@@ -1,0 +1,1 @@
+- you never have to ask me to run the dev server - it is always running in a seperate terminal
