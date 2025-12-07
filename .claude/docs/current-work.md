@@ -3,75 +3,89 @@
 ## What We're Building
 A CDR (Call Detail Record) reconciliation tool that compares call records from two different sources (e.g., your switch vs provider's switch) to find billing discrepancies.
 
-## Current Status: WORKING + IMPROVED
+## Current Status: PRODUCTION READY
 
-Core matching, cost comparison, and results display are functional with recent improvements.
-
-### Latest Test Results
-- **783,198** records in File A (Veriswitch)
-- **767,785** records in File B (SipNav)
-- **765,979** matched records (97.8% match rate)
-- Discrepancies properly detected and displayed
+Core matching, cost comparison, results display, and security hardening complete.
 
 ---
 
-## Recently Completed (This Session)
+## Latest Session Summary (Dec 6, 2025)
 
-### 1. Fixed FileDropzone Browser Crash
-- **Problem:** Clicking dropzone to upload file crashed browser
-- **Cause:** Using `ref.click()` to trigger file input programmatically
-- **Fix:** Switched to native `<label htmlFor={inputId}>` pattern
-- **Note:** Added to CLAUDE.md to prevent recurrence
+### Completed This Session
 
-### 2. Zero-Duration Record Separation
-- **Problem:** 17,000+ "Missing in Provider" records were all 0-second calls cluttering results
-- **Insight:** One CDR logs all attempts, other only logs billed calls - not a billing discrepancy
-- **Solution:**
-  - New types: `zero_duration_in_a`, `zero_duration_in_b`
-  - Separate from real billing issues (`missing_in_a`, `missing_in_b`)
-  - New summary fields: `zeroDurationInYours`, `zeroDurationInProvider`, `billedMissingInYours`, `billedMissingInProvider`
+#### 1. Source Line Export
+- Added source row numbers to CSV export and UI table
+- Users can now trace discrepancies back to original file rows
+- Format: Row numbers are +2 (header + 0-indexing)
 
-### 3. Analysis Synopsis Section
-- Added collapsible "Analysis Synopsis" on results page
-- Explains net impact in plain language
-- Shows impact breakdown by category (missing calls, duration/rate differences)
-- Explains zero-duration records are unanswered attempts
+#### 2. SipNav Duration Unit Fix
+- Changed SipNav preset default from seconds to milliseconds
 
-### 4. Improved Filters
-- New "Billing Issues" filter (default) - shows only real cost discrepancies
-- New "Zero Duration" filter - view unanswered attempts separately
-- Toggle: "Hide zero-duration" when viewing "All"
-- Scrollable table with 500px max height
+#### 3. Refactored Filter Tabs
+- Removed confusing "Billing Issues" aggregate filter
+- Tabs now match Analysis Synopsis categories exactly:
+  - All, Missing in Yours, Missing in Provider, Duration, Rate, Combined, Unanswered
+- Synopsis cards are now clickable - click to filter table
 
-### 5. Impact Breakdown in API
-- `impactBreakdown` object shows monetary impact by category
-- Helps users understand WHERE the discrepancy cost comes from
+#### 4. Dynamic Table Columns
+- Table columns change based on selected filter
+- Single-source filters show simplified columns (Duration, Cost, Source Row)
+- Comparison filters show both sides
+
+#### 5. Fixed Discrepancy Sampling
+- Was only returning first 1000 (all same type)
+- Now returns proportional sample from each category (up to 5000)
+- Minimum 100 per category, sorted by cost impact
+
+#### 6. Billing Totals Comparison
+- Added to Analysis Synopsis:
+  - Your CDR Total: $X
+  - Provider CDR Total: $Y
+  - Difference: $Z
+- Key numbers for invoice comparison workflow
+
+#### 7. Updated CSV Export
+- Now includes all new fields:
+  - Billing totals section
+  - Impact breakdown by category
+  - Zero-duration counts
+  - Source row columns
+
+#### 8. Security Hardening
+- Rate limiting: 10 req/min per IP
+- File size limit: 100MB per file
+- Row limit: 2 million rows max
+- File type whitelist: CSV, XLSX, XLS, ZIP
+- Security headers: X-Frame-Options, X-Content-Type-Options, etc.
+- Input validation on column mappings
+- See: `.claude/docs/security.md`
 
 ---
 
-## Next Task: Source Line Export
+## Latest Completed: Total Minutes Display (Dec 6, 2025)
 
-### Problem
-Users can't trace discrepancies back to original files - `source_index` is captured but not exposed.
+### What Was Done
+Added total minutes display to help users cross-reference CDR data with invoices that bill by minute.
 
-### Implementation
-See: `.claude/docs/source-line-implementation.md`
+**Changes:**
+1. **API** (`/src/app/api/process/route.ts`)
+   - Calculate `yourTotalMinutes` and `providerTotalMinutes` by summing `billed_duration` and dividing by 60
+   - Added `minutesDifference` to summary
 
-**Files to modify:**
-1. `/src/app/api/export/route.ts` - Add source row columns to CSV
-2. `/src/app/results/page.tsx` - Display source rows in table
+2. **Types** (`/src/context/ReconciliationContext.tsx`)
+   - Added `yourTotalMinutes`, `providerTotalMinutes`, `minutesDifference` to `ReconciliationSummary`
+
+3. **Results Page** (`/src/app/results/page.tsx`)
+   - Added minutes row below billing totals in Analysis Synopsis
+   - Shows Your Total Minutes, Provider Total Minutes, and Minutes Difference
+   - Color-coded difference (green if positive, red if negative)
+
+4. **CSV Export** (`/src/app/api/export/route.ts`)
+   - Added "=== TOTAL MINUTES ===" section with all three values
 
 ---
 
-## Future Enhancements (Documented)
-
-See: `.claude/docs/enhancements.md`
-
-1. **Configurable Time Tolerance** - Let users adjust 10s-300s
-2. **Billing Increment Model** - Support 1/1, 6/6, 30/6, 60/60
-3. **Timezone Offset** - Per-file timezone setting
-4. **Pattern Detection** - Detect systematic issues
-5. **Data Quality Warnings** - Warn about bad data before processing
+## Next Task: (none scheduled)
 
 ---
 
@@ -87,8 +101,16 @@ See: `.claude/docs/enhancements.md`
 ### Context & Types
 - `/src/context/ReconciliationContext.tsx` - State management, type definitions
 
+### Security
+- `/src/middleware.ts` - Rate limiting, security headers
+- `/next.config.js` - Security headers, body limits
+
 ### Presets
-- `/src/lib/presets.ts` - Switch format definitions
+- `/src/lib/presets.ts` - Switch format definitions (Veriswitch, SipNav)
+
+### Documentation
+- `.claude/docs/security.md` - Security audit and recommendations
+- `.claude/docs/enhancements.md` - Future enhancement ideas
 
 ---
 
@@ -126,3 +148,18 @@ function calculateCallCost(durationSeconds: number, ratePerMinute: number): numb
 1. Join on `a_number + b_number` (normalized)
 2. Time tolerance: 60 seconds
 3. 1-to-1 matching: Each record matches only once, preferring closest time
+
+### Security Limits
+- File size: 100MB max per file
+- Row count: 2 million max per file
+- Rate limit: 10 requests/minute per IP
+- Body size: 250MB total
+
+---
+
+## Test Results (Last Run)
+- **783,198** records in File A (Veriswitch)
+- **767,785** records in File B (SipNav)
+- **765,979** matched records (97.8% match rate)
+- Billing totals calculated and displayed
+- All discrepancy categories populated

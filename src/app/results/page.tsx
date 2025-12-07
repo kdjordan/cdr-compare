@@ -382,7 +382,8 @@ export default function ResultsPage() {
               {showSynopsis && (
                 <div className="px-6 pb-6 space-y-4">
                   {/* Billing Totals Comparison - The key numbers */}
-                  <div className="p-4 rounded-lg bg-muted/30 border border-border">
+                  <div className="p-4 rounded-lg bg-muted/30 border border-border space-y-4">
+                    {/* Cost Row */}
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                       {/* Your CDR Total */}
                       <div className="text-center p-3 rounded-lg bg-accent/5 border border-accent/20">
@@ -420,6 +421,39 @@ export default function ResultsPage() {
                             : (summary.billingDifference ?? 0) > 0
                               ? "Your records higher"
                               : "No difference"}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Minutes Row */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      {/* Your Total Minutes */}
+                      <div className="text-center p-3 rounded-lg bg-accent/5 border border-accent/20">
+                        <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Your Total Minutes</p>
+                        <p className="text-xl font-bold font-display text-accent">
+                          {(summary.yourTotalMinutes ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </p>
+                      </div>
+
+                      {/* Provider Total Minutes */}
+                      <div className="text-center p-3 rounded-lg bg-blue-500/5 border border-blue-500/20">
+                        <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Provider Total Minutes</p>
+                        <p className="text-xl font-bold font-display text-blue-500">
+                          {(summary.providerTotalMinutes ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </p>
+                      </div>
+
+                      {/* Minutes Difference */}
+                      <div className={`text-center p-3 rounded-lg ${
+                        (summary.minutesDifference ?? 0) >= 0
+                          ? "bg-accent/5 border border-accent/20"
+                          : "bg-destructive/5 border border-destructive/20"
+                      }`}>
+                        <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Minutes Difference</p>
+                        <p className={`text-xl font-bold font-display ${
+                          (summary.minutesDifference ?? 0) >= 0 ? "text-accent" : "text-destructive"
+                        }`}>
+                          {(summary.minutesDifference ?? 0) >= 0 ? "+" : ""}{(summary.minutesDifference ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </p>
                       </div>
                     </div>

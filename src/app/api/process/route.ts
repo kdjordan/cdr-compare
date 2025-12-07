@@ -270,8 +270,54 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const mappingA: ColumnMapping = JSON.parse(mappingAStr);
-    const mappingB: ColumnMapping = JSON.parse(mappingBStr);
+    // Security: Validate file sizes (max 100MB each)
+    const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
+    if (fileA.size > MAX_FILE_SIZE || fileB.size > MAX_FILE_SIZE) {
+      return NextResponse.json(
+        { error: `File size exceeds maximum allowed (${MAX_FILE_SIZE / 1024 / 1024}MB)` },
+        { status: 413 }
+      );
+    }
+
+    // Security: Validate file extensions
+    const allowedExtensions = [".csv", ".xlsx", ".xls", ".zip"];
+    const extA = path.extname(fileA.name).toLowerCase();
+    const extB = path.extname(fileB.name).toLowerCase();
+    if (!allowedExtensions.includes(extA) || !allowedExtensions.includes(extB)) {
+      return NextResponse.json(
+        { error: "Invalid file type. Allowed: CSV, XLSX, XLS, ZIP" },
+        { status: 400 }
+      );
+    }
+
+    // Security: Validate mapping JSON to prevent prototype pollution
+    let mappingA: ColumnMapping;
+    let mappingB: ColumnMapping;
+    try {
+      mappingA = JSON.parse(mappingAStr);
+      mappingB = JSON.parse(mappingBStr);
+
+      // Ensure mappings are plain objects with expected keys only
+      const allowedKeys = ["a_number", "b_number", "seize_time", "answer_time", "end_time", "billed_duration", "rate"];
+      const validateMapping = (m: ColumnMapping) => {
+        for (const key of Object.keys(m)) {
+          if (!allowedKeys.includes(key)) {
+            throw new Error(`Invalid mapping key: ${key}`);
+          }
+          const value = m[key as keyof ColumnMapping];
+          if (value !== null && value !== undefined && typeof value !== "string") {
+            throw new Error(`Invalid mapping value for ${key}`);
+          }
+        }
+      };
+      validateMapping(mappingA);
+      validateMapping(mappingB);
+    } catch (e) {
+      return NextResponse.json(
+        { error: "Invalid column mapping format" },
+        { status: 400 }
+      );
+    }
 
     // Log mappings summary
     console.log("Processing with mappings - File A:", Object.entries(mappingA).filter(([,v]) => v).map(([k,v]) => `${k}:${v}`).join(", "));
@@ -309,6 +355,16 @@ export async function POST(request: NextRequest) {
     if (!dataA.length || !dataB.length) {
       await cleanup();
       return NextResponse.json({ error: "One or both files contain no data" }, { status: 400 });
+    }
+
+    // Security: Limit total rows to prevent memory exhaustion
+    const MAX_ROWS = 2_000_000; // 2 million rows max
+    if (dataA.length > MAX_ROWS || dataB.length > MAX_ROWS) {
+      await cleanup();
+      return NextResponse.json(
+        { error: `File exceeds maximum row limit (${MAX_ROWS.toLocaleString()} rows)` },
+        { status: 413 }
+      );
     }
 
     // Create SQLite database
@@ -634,15 +690,23 @@ export async function POST(request: NextRequest) {
     // Calculate TOTAL billed amounts from each CDR (the key numbers for invoice comparison)
     // Your total = sum of all calls in your CDR
     let yourTotalBilled = 0;
+    let yourTotalSeconds = 0;
     for (const record of allRecordsA) {
       yourTotalBilled += calculateCallCost(record.billed_duration, record.rate);
+      yourTotalSeconds += record.billed_duration;
     }
 
     // Provider total = sum of all calls in provider CDR
     let providerTotalBilled = 0;
+    let providerTotalSeconds = 0;
     for (const record of allRecordsB) {
       providerTotalBilled += calculateCallCost(record.billed_duration, record.rate);
+      providerTotalSeconds += record.billed_duration;
     }
+
+    // Convert seconds to minutes for display
+    const yourTotalMinutes = Math.round((yourTotalSeconds / 60) * 100) / 100;
+    const providerTotalMinutes = Math.round((providerTotalSeconds / 60) * 100) / 100;
 
     // Calculate cost breakdowns for synopsis
     const missingInAWithCost = discrepancies.filter(d => d.type === "missing_in_a");
@@ -667,6 +731,10 @@ export async function POST(request: NextRequest) {
       yourTotalBilled: Math.round(yourTotalBilled * 100) / 100,
       providerTotalBilled: Math.round(providerTotalBilled * 100) / 100,
       billingDifference: Math.round((yourTotalBilled - providerTotalBilled) * 100) / 100,
+      // TOTAL MINUTES - for invoice cross-reference
+      yourTotalMinutes,
+      providerTotalMinutes,
+      minutesDifference: Math.round((yourTotalMinutes - providerTotalMinutes) * 100) / 100,
       // Original totals (includes zero-duration)
       missingInYours: unmatchedB.length,
       missingInProvider: unmatchedA.length,

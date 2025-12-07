@@ -66,6 +66,10 @@ export interface ReconciliationSummary {
   yourTotalBilled: number;
   providerTotalBilled: number;
   billingDifference: number;
+  // TOTAL MINUTES - for invoice cross-reference
+  yourTotalMinutes: number;
+  providerTotalMinutes: number;
+  minutesDifference: number;
   // Missing record counts
   missingInYours: number;
   missingInProvider: number;

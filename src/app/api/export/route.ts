@@ -25,6 +25,10 @@ interface Summary {
   yourTotalBilled?: number;
   providerTotalBilled?: number;
   billingDifference?: number;
+  // Total minutes
+  yourTotalMinutes?: number;
+  providerTotalMinutes?: number;
+  minutesDifference?: number;
   // Record counts
   missingInYours: number;
   missingInProvider: number;
@@ -130,6 +134,11 @@ export async function POST(request: NextRequest) {
       ["Your CDR Total", summary.yourTotalBilled != null ? `$${summary.yourTotalBilled.toFixed(2)}` : "N/A"],
       ["Provider CDR Total", summary.providerTotalBilled != null ? `$${summary.providerTotalBilled.toFixed(2)}` : "N/A"],
       ["Billing Difference", summary.billingDifference != null ? `$${summary.billingDifference.toFixed(2)}` : "N/A"],
+      [""],
+      ["=== TOTAL MINUTES ==="],
+      ["Your Total Minutes", summary.yourTotalMinutes != null ? summary.yourTotalMinutes.toFixed(2) : "N/A"],
+      ["Provider Total Minutes", summary.providerTotalMinutes != null ? summary.providerTotalMinutes.toFixed(2) : "N/A"],
+      ["Minutes Difference", summary.minutesDifference != null ? summary.minutesDifference.toFixed(2) : "N/A"],
       [""],
       ["=== RECORD COUNTS ==="],
       ["Your Total Records", summary.totalRecordsA],
