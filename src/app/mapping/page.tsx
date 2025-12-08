@@ -20,6 +20,7 @@ const CANONICAL_FIELDS = [
   { key: "end_time", label: "End Time", description: "Call end time", required: false },
   { key: "billed_duration", label: "Billed Duration", description: "Duration in seconds", required: true },
   { key: "rate", label: "Rate", description: "Per-minute rate", required: false },
+  { key: "lrn", label: "LRN", description: "Location Routing Number", required: true },
 ] as const;
 
 // Common header patterns for auto-detection
@@ -31,6 +32,7 @@ const HEADER_PATTERNS: Record<string, string[]> = {
   end_time: ["end", "disconnect", "release", "call_end", "end_time", "endtime", "hangup"],
   billed_duration: ["duration", "billed", "seconds", "bill_sec", "billsec", "length", "dur"],
   rate: ["rate", "price", "cost", "per_min", "permin", "charge"],
+  lrn: ["lrn", "urn", "lrn_number", "routing", "ported", "location_routing"],
 };
 
 function autoDetectMapping(headers: string[]): ColumnMapping {
@@ -42,6 +44,7 @@ function autoDetectMapping(headers: string[]): ColumnMapping {
     end_time: null,
     billed_duration: null,
     rate: null,
+    lrn: null,
   };
 
   for (const header of headers) {
@@ -173,6 +176,7 @@ export default function MappingPage() {
       end_time: null,
       billed_duration: null,
       rate: null,
+      lrn: null,
     };
   });
 
@@ -187,6 +191,7 @@ export default function MappingPage() {
       end_time: null,
       billed_duration: null,
       rate: null,
+      lrn: null,
     };
   });
 
@@ -211,7 +216,7 @@ export default function MappingPage() {
     return null;
   }
 
-  const requiredFields: (keyof ColumnMapping)[] = ["a_number", "b_number", "seize_time", "billed_duration"];
+  const requiredFields: (keyof ColumnMapping)[] = ["a_number", "b_number", "seize_time", "billed_duration", "lrn"];
 
   const isValidMapping = (mapping: ColumnMapping) =>
     requiredFields.every((field) => mapping[field] !== null);

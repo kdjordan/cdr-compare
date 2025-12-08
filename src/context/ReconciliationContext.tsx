@@ -20,6 +20,7 @@ export interface ColumnMapping {
   end_time: string | null;
   billed_duration: string | null;
   rate: string | null;
+  lrn: string | null;
 }
 
 // Settings for how to interpret data from each file
@@ -34,7 +35,7 @@ export const DEFAULT_FILE_SETTINGS: FileSettings = {
 };
 
 export interface Discrepancy {
-  type: "missing_in_a" | "missing_in_b" | "zero_duration_in_a" | "zero_duration_in_b" | "duration_mismatch" | "rate_mismatch" | "cost_mismatch";
+  type: "missing_in_a" | "missing_in_b" | "zero_duration_in_a" | "zero_duration_in_b" | "duration_mismatch" | "rate_mismatch" | "cost_mismatch" | "lrn_mismatch";
   a_number: string;
   b_number: string;
   seize_time: number | null;
@@ -45,6 +46,8 @@ export interface Discrepancy {
   your_cost: number | null;
   provider_cost: number | null;
   cost_difference: number;
+  your_lrn?: string | null;
+  provider_lrn?: string | null;
   source_index?: number;
   source_index_a?: number;
   source_index_b?: number;
@@ -82,6 +85,7 @@ export interface ReconciliationSummary {
   durationMismatches: number;
   rateMismatches: number;
   costMismatches: number;
+  lrnMismatches: number;
   totalDiscrepancies: number;
   monetaryImpact: number;
   impactBreakdown: ImpactBreakdown;

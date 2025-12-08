@@ -14,6 +14,7 @@ const CANONICAL_FIELDS = [
   { key: "end_time", label: "End Time", hint: "Call end time", required: false },
   { key: "billed_duration", label: "Duration", hint: "Seconds billed", required: true },
   { key: "rate", label: "Rate", hint: "Per-minute rate", required: true },
+  { key: "lrn", label: "LRN", hint: "Location Routing Number", required: true },
 ] as const;
 
 interface ColumnMappingModalProps {
@@ -162,6 +163,7 @@ export function ColumnMappingModal({
       end_time: mapping.end_time,
       billed_duration: mapping.billed_duration,
       rate: mapping.rate,
+      lrn: mapping.lrn,
     };
     onConfirm(columnMapping, settings);
   };

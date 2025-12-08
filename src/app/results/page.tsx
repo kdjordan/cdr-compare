@@ -23,12 +23,13 @@ import {
 } from "lucide-react";
 import { useReconciliation, Discrepancy } from "@/context/ReconciliationContext";
 
-type DiscrepancyFilter = "all" | "missing_in_a" | "missing_in_b" | "duration_mismatch" | "rate_mismatch" | "cost_mismatch" | "zero_duration";
+type DiscrepancyFilter = "all" | "missing_in_a" | "missing_in_b" | "duration_mismatch" | "rate_mismatch" | "cost_mismatch" | "lrn_mismatch" | "zero_duration";
 
 const FILTER_OPTIONS: { value: DiscrepancyFilter; label: string; description?: string }[] = [
   { value: "all", label: "All", description: "All discrepancies" },
   { value: "missing_in_a", label: "Missing in Yours", description: "Provider billing you for calls you don't have" },
   { value: "missing_in_b", label: "Missing in Provider", description: "Calls you have that provider doesn't" },
+  { value: "lrn_mismatch", label: "LRN", description: "Different LRN dip results" },
   { value: "duration_mismatch", label: "Duration", description: "Same call, different duration" },
   { value: "rate_mismatch", label: "Rate", description: "Same call, different rate" },
   { value: "cost_mismatch", label: "Combined", description: "Both rate & duration differ" },
@@ -36,7 +37,7 @@ const FILTER_OPTIONS: { value: DiscrepancyFilter; label: string; description?: s
 ];
 
 // Column visibility based on filter type
-type ColumnKey = "type" | "a_number" | "b_number" | "time" | "your_dur" | "prov_dur" | "your_cost" | "prov_cost" | "difference" | "your_row" | "prov_row";
+type ColumnKey = "type" | "a_number" | "b_number" | "time" | "your_dur" | "prov_dur" | "your_cost" | "prov_cost" | "difference" | "your_row" | "prov_row" | "your_lrn" | "prov_lrn";
 
 const getVisibleColumns = (filter: DiscrepancyFilter): Set<ColumnKey> => {
   const base: ColumnKey[] = ["a_number", "b_number", "time"];
@@ -51,6 +52,9 @@ const getVisibleColumns = (filter: DiscrepancyFilter): Set<ColumnKey> => {
     case "zero_duration":
       // Show which side has it
       return new Set([...base, "type", "your_dur", "prov_dur", "your_row", "prov_row"]);
+    case "lrn_mismatch":
+      // Show LRN comparison
+      return new Set([...base, "your_lrn", "prov_lrn", "your_cost", "prov_cost", "difference", "your_row", "prov_row"]);
     case "duration_mismatch":
       // Compare durations
       return new Set([...base, "your_dur", "prov_dur", "your_cost", "prov_cost", "difference", "your_row", "prov_row"]);
@@ -84,6 +88,11 @@ function formatMoney(amount: number): string {
   return `${sign}$${amount.toFixed(2)}`;
 }
 
+function formatDifference(amount: number): string {
+  const sign = amount >= 0 ? "+" : "";
+  return `${sign}$${amount.toFixed(4)}`;
+}
+
 function formatCost(cost: number | null): string {
   if (cost === null) return "-";
   return `$${cost.toFixed(4)}`;
@@ -99,6 +108,8 @@ function getTypeLabel(type: Discrepancy["type"]): string {
       return "Unanswered (Provider)";
     case "zero_duration_in_b":
       return "Unanswered (Yours)";
+    case "lrn_mismatch":
+      return "LRN Mismatch";
     case "duration_mismatch":
       return "Duration Mismatch";
     case "rate_mismatch":
@@ -141,6 +152,8 @@ function getTypeColor(type: Discrepancy["type"]): string {
     case "zero_duration_in_a":
     case "zero_duration_in_b":
       return "text-slate-400 bg-slate-400/10 border-slate-400/20";
+    case "lrn_mismatch":
+      return "text-pink-500 bg-pink-500/10 border-pink-500/20";
     case "duration_mismatch":
       return "text-blue-500 bg-blue-500/10 border-blue-500/20";
     case "rate_mismatch":
@@ -184,6 +197,8 @@ export default function ResultsPage() {
         return discrepancies.filter(d => d.type === "missing_in_a");
       case "missing_in_b":
         return discrepancies.filter(d => d.type === "missing_in_b");
+      case "lrn_mismatch":
+        return discrepancies.filter(d => d.type === "lrn_mismatch");
       case "duration_mismatch":
         return discrepancies.filter(d => d.type === "duration_mismatch");
       case "rate_mismatch":
@@ -551,6 +566,24 @@ export default function ResultsPage() {
                           <p className="text-xs text-muted-foreground">{summary.costMismatches} calls with both rate & duration differences</p>
                         </button>
                       )}
+
+                      {(summary.lrnMismatches ?? 0) > 0 && (
+                        <button
+                          onClick={() => setFilter("lrn_mismatch")}
+                          className={`p-3 rounded-lg text-left transition-all ${
+                            filter === "lrn_mismatch"
+                              ? "bg-pink-500/15 border-2 border-pink-500/40 ring-2 ring-pink-500/20"
+                              : "bg-pink-500/5 border border-pink-500/20 hover:bg-pink-500/10"
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 mb-1">
+                            <Database className="w-4 h-4 text-pink-500" />
+                            <span className="text-sm font-medium">LRN Mismatches</span>
+                          </div>
+                          <p className="text-lg font-bold text-pink-500">{summary.lrnMismatches}</p>
+                          <p className="text-xs text-muted-foreground">Calls with different LRN dip results - potential billing rate issues</p>
+                        </button>
+                      )}
                     </div>
                   )}
 
@@ -694,6 +727,16 @@ export default function ResultsPage() {
                               Time
                             </th>
                           )}
+                          {visibleColumns.has("your_lrn") && (
+                            <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                              Your LRN
+                            </th>
+                          )}
+                          {visibleColumns.has("prov_lrn") && (
+                            <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                              Prov. LRN
+                            </th>
+                          )}
                           {visibleColumns.has("your_dur") && (
                             <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
                               {filter === "missing_in_b" ? "Duration" : "Your Dur."}
@@ -757,6 +800,12 @@ export default function ResultsPage() {
                               {visibleColumns.has("time") && (
                                 <td className="px-4 py-3 text-sm text-muted-foreground">{formatTimestamp(d.seize_time)}</td>
                               )}
+                              {visibleColumns.has("your_lrn") && (
+                                <td className="px-4 py-3 font-mono text-sm">{d.your_lrn || "-"}</td>
+                              )}
+                              {visibleColumns.has("prov_lrn") && (
+                                <td className="px-4 py-3 font-mono text-sm">{d.provider_lrn || "-"}</td>
+                              )}
                               {visibleColumns.has("your_dur") && (
                                 <td className="px-4 py-3 font-mono text-sm">{formatDuration(d.your_duration)}</td>
                               )}
@@ -773,7 +822,7 @@ export default function ResultsPage() {
                                 <td className={`px-4 py-3 font-mono text-sm text-right ${
                                   d.cost_difference > 0 ? "text-accent" : d.cost_difference < 0 ? "text-destructive" : "text-muted-foreground"
                                 }`}>
-                                  {formatMoney(d.cost_difference)}
+                                  {formatDifference(d.cost_difference)}
                                 </td>
                               )}
                               {visibleColumns.has("your_row") && (

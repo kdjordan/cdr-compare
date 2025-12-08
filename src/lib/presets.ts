@@ -41,8 +41,9 @@ export const SWITCH_PRESETS: SwitchPreset[] = [
       end_time: "stop_time",
       billed_duration: "duration_vendor",
       rate: "vendor_rate",
+      lrn: "lrn",
     },
-    expectedColumns: ["ani_out", "dialed", "seized_time", "duration_vendor", "vendor_rate"],
+    expectedColumns: ["ani_out", "dialed", "seized_time", "duration_vendor", "vendor_rate", "lrn"],
     durationUnit: "seconds",
     ratePrecision: 4,
   },
@@ -58,8 +59,9 @@ export const SWITCH_PRESETS: SwitchPreset[] = [
       end_time: null,
       billed_duration: "account_billed_duration",
       rate: "account_rate",
+      lrn: "lrn_number",
     },
-    expectedColumns: ["src_number", "dst_number", "date", "account_billed_duration", "account_rate"],
+    expectedColumns: ["src_number", "dst_number", "date", "account_billed_duration", "account_rate", "lrn_number"],
     durationUnit: "milliseconds",
     ratePrecision: 4,
   },
@@ -92,7 +94,7 @@ export function isPresetValidForHeaders(preset: SwitchPreset, headers: string[])
   const headerSet = new Set(headers);
 
   // Check required fields
-  const requiredFields: (keyof ColumnMapping)[] = ["a_number", "b_number", "seize_time", "billed_duration"];
+  const requiredFields: (keyof ColumnMapping)[] = ["a_number", "b_number", "seize_time", "billed_duration", "lrn"];
 
   for (const field of requiredFields) {
     const mappedColumn = preset.mapping[field];

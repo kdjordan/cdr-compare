@@ -62,26 +62,48 @@ Core matching, cost comparison, results display, and security hardening complete
 
 ---
 
-## Latest Completed: Total Minutes Display (Dec 6, 2025)
+## Latest Completed: LRN Mismatch Feature (Dec 7, 2025)
 
 ### What Was Done
-Added total minutes display to help users cross-reference CDR data with invoices that bill by minute.
+Added LRN (Location Routing Number) comparison to detect when carriers have different LRN dip results, which can cause billing rate discrepancies.
 
 **Changes:**
-1. **API** (`/src/app/api/process/route.ts`)
-   - Calculate `yourTotalMinutes` and `providerTotalMinutes` by summing `billed_duration` and dividing by 60
-   - Added `minutesDifference` to summary
+
+1. **Presets** (`/src/lib/presets.ts`)
+   - Veriswitch: maps `urn` column to `lrn`
+   - SipNav: maps `lrn_number` column to `lrn`
+   - LRN is now a required field in preset validation
 
 2. **Types** (`/src/context/ReconciliationContext.tsx`)
-   - Added `yourTotalMinutes`, `providerTotalMinutes`, `minutesDifference` to `ReconciliationSummary`
+   - Added `lrn` to `ColumnMapping` interface
+   - Added `lrn_mismatch` to `Discrepancy` type
+   - Added `your_lrn` and `provider_lrn` to `Discrepancy` interface
+   - Added `lrnMismatches` count to `ReconciliationSummary`
 
-3. **Results Page** (`/src/app/results/page.tsx`)
-   - Added minutes row below billing totals in Analysis Synopsis
-   - Shows Your Total Minutes, Provider Total Minutes, and Minutes Difference
-   - Color-coded difference (green if positive, red if negative)
+3. **Mapping UI** (`/src/app/mapping/page.tsx` & `/src/components/mapping/ColumnMappingModal.tsx`)
+   - Added LRN field to mapping UI (required)
+   - Auto-detection patterns: lrn, urn, lrn_number, routing, ported
 
-4. **CSV Export** (`/src/app/api/export/route.ts`)
-   - Added "=== TOTAL MINUTES ===" section with all three values
+4. **API** (`/src/app/api/process/route.ts`)
+   - LRN stored in database tables
+   - LRN comparison during matching - creates `lrn_mismatch` discrepancy when LRNs differ
+   - Added `lrnMismatches` count to summary
+
+5. **Results Page** (`/src/app/results/page.tsx`)
+   - New "LRN" filter tab
+   - New pink "LRN Mismatches" card in synopsis (shows count of mismatches)
+   - LRN columns (Your LRN, Provider LRN) shown when LRN filter is selected
+   - Pink color theme for LRN mismatch badges
+
+6. **CSV Export** (`/src/app/api/export/route.ts`)
+   - Added "Your LRN" and "Provider LRN" columns
+   - Added "LRN Mismatches" count to summary section
+
+---
+
+## Previous: Total Minutes Display (Dec 6, 2025)
+
+Added total minutes display to help users cross-reference CDR data with invoices that bill by minute.
 
 ---
 
@@ -102,7 +124,7 @@ Added total minutes display to help users cross-reference CDR data with invoices
 - `/src/context/ReconciliationContext.tsx` - State management, type definitions
 
 ### Security
-- `/src/middleware.ts` - Rate limiting, security headers
+- `/src/proxy.ts` - Rate limiting, security headers (renamed from middleware.ts in Next.js 16)
 - `/next.config.js` - Security headers, body limits
 
 ### Presets
@@ -122,6 +144,7 @@ Added total minutes display to help users cross-reference CDR data with invoices
 | `missing_in_b` | You have billed call they don't (you're not being billed) |
 | `zero_duration_in_a` | Provider has 0-sec call you don't (unanswered attempt) |
 | `zero_duration_in_b` | You have 0-sec call they don't (unanswered attempt) |
+| `lrn_mismatch` | Same call, different LRN (potential rate deck issue) |
 | `duration_mismatch` | Same call, different duration |
 | `rate_mismatch` | Same call, different rate |
 | `cost_mismatch` | Both duration and rate differ |
@@ -163,3 +186,4 @@ function calculateCallCost(durationSeconds: number, ratePerMinute: number): numb
 - **765,979** matched records (97.8% match rate)
 - Billing totals calculated and displayed
 - All discrepancy categories populated
+te

@@ -16,6 +16,7 @@ interface ColumnMapping {
   end_time?: string | null;
   billed_duration: string | null;
   rate?: string | null;
+  lrn: string | null;
 }
 
 // Phone number normalization
@@ -298,7 +299,7 @@ export async function POST(request: NextRequest) {
       mappingB = JSON.parse(mappingBStr);
 
       // Ensure mappings are plain objects with expected keys only
-      const allowedKeys = ["a_number", "b_number", "seize_time", "answer_time", "end_time", "billed_duration", "rate"];
+      const allowedKeys = ["a_number", "b_number", "seize_time", "answer_time", "end_time", "billed_duration", "rate", "lrn"];
       const validateMapping = (m: ColumnMapping) => {
         for (const key of Object.keys(m)) {
           if (!allowedKeys.includes(key)) {
@@ -324,13 +325,13 @@ export async function POST(request: NextRequest) {
     console.log("Processing with mappings - File B:", Object.entries(mappingB).filter(([,v]) => v).map(([k,v]) => `${k}:${v}`).join(", "));
 
     // Validate required mappings
-    if (!mappingA.a_number || !mappingA.b_number || !mappingA.seize_time || !mappingA.billed_duration) {
+    if (!mappingA.a_number || !mappingA.b_number || !mappingA.seize_time || !mappingA.billed_duration || !mappingA.lrn) {
       return NextResponse.json(
         { error: "Missing required column mappings for file A" },
         { status: 400 }
       );
     }
-    if (!mappingB.a_number || !mappingB.b_number || !mappingB.seize_time || !mappingB.billed_duration) {
+    if (!mappingB.a_number || !mappingB.b_number || !mappingB.seize_time || !mappingB.billed_duration || !mappingB.lrn) {
       return NextResponse.json(
         { error: "Missing required column mappings for file B" },
         { status: 400 }
@@ -384,6 +385,7 @@ export async function POST(request: NextRequest) {
         end_time INTEGER,
         billed_duration INTEGER DEFAULT 0,
         rate REAL DEFAULT 0,
+        lrn TEXT,
         raw_index INTEGER
       );
 
@@ -396,19 +398,20 @@ export async function POST(request: NextRequest) {
         end_time INTEGER,
         billed_duration INTEGER DEFAULT 0,
         rate REAL DEFAULT 0,
+        lrn TEXT,
         raw_index INTEGER
       );
     `);
 
     // Prepare insert statements
     const insertA = db.prepare(`
-      INSERT INTO records_a (a_number, b_number, seize_time, answer_time, end_time, billed_duration, rate, raw_index)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO records_a (a_number, b_number, seize_time, answer_time, end_time, billed_duration, rate, lrn, raw_index)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const insertB = db.prepare(`
-      INSERT INTO records_b (a_number, b_number, seize_time, answer_time, end_time, billed_duration, rate, raw_index)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO records_b (a_number, b_number, seize_time, answer_time, end_time, billed_duration, rate, lrn, raw_index)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     // Batch insert File A records
@@ -425,6 +428,7 @@ export async function POST(request: NextRequest) {
           mappingA.end_time ? normalizeTimestamp(row[mappingA.end_time] as string | number | Date | null) : null,
           normalizeDuration(row[mappingA.billed_duration!] as string | number | null),
           mappingA.rate ? normalizeRate(row[mappingA.rate] as string | number | null) : 0,
+          normalizePhoneNumber(row[mappingA.lrn!] as string | number | null),
           startIndex + i
         );
       }
@@ -441,6 +445,7 @@ export async function POST(request: NextRequest) {
           mappingB.end_time ? normalizeTimestamp(row[mappingB.end_time] as string | number | Date | null) : null,
           normalizeDuration(row[mappingB.billed_duration!] as string | number | null),
           mappingB.rate ? normalizeRate(row[mappingB.rate] as string | number | null) : 0,
+          normalizePhoneNumber(row[mappingB.lrn!] as string | number | null),
           startIndex + i
         );
       }
@@ -482,6 +487,8 @@ export async function POST(request: NextRequest) {
       duration_b: number;
       rate_a: number;
       rate_b: number;
+      lrn_a: string;
+      lrn_b: string;
       index_a: number;
       index_b: number;
     }
@@ -503,6 +510,8 @@ export async function POST(request: NextRequest) {
         b.billed_duration as duration_b,
         a.rate as rate_a,
         b.rate as rate_b,
+        a.lrn as lrn_a,
+        b.lrn as lrn_b,
         a.raw_index as index_a,
         b.raw_index as index_b,
         ABS(COALESCE(a.seize_time, 0) - COALESCE(b.seize_time, 0)) as time_diff,
@@ -573,7 +582,7 @@ export async function POST(request: NextRequest) {
     // Build discrepancies list
     // Types now include zero_duration variants to separate unanswered attempts from real billing issues
     interface Discrepancy {
-      type: "missing_in_a" | "missing_in_b" | "zero_duration_in_a" | "zero_duration_in_b" | "duration_mismatch" | "rate_mismatch" | "cost_mismatch";
+      type: "missing_in_a" | "missing_in_b" | "zero_duration_in_a" | "zero_duration_in_b" | "duration_mismatch" | "rate_mismatch" | "cost_mismatch" | "lrn_mismatch";
       a_number: string;
       b_number: string;
       seize_time: number | null;
@@ -584,6 +593,8 @@ export async function POST(request: NextRequest) {
       your_cost: number | null;
       provider_cost: number | null;
       cost_difference: number;
+      your_lrn?: string | null;
+      provider_lrn?: string | null;
       source_index?: number;
       source_index_a?: number;
       source_index_b?: number;
@@ -650,14 +661,39 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Compare matched records - focus on COST differences
+    // Compare matched records - focus on COST differences and LRN mismatches
+    let lrnMismatchCount = 0;
     for (const match of matches) {
       const yourCost = calculateCallCost(match.duration_a, match.rate_a);
       const providerCost = calculateCallCost(match.duration_b, match.rate_b);
       const costDiff = yourCost - providerCost;
 
-      // Only report if there's a meaningful cost difference (> $0.0001)
-      if (Math.abs(costDiff) > 0.0001) {
+      // Check for LRN mismatch - different LRN dips could mean different billing rates
+      const lrnMismatch = match.lrn_a !== match.lrn_b && match.lrn_a && match.lrn_b;
+      if (lrnMismatch) {
+        lrnMismatchCount++;
+        discrepancies.push({
+          type: "lrn_mismatch",
+          a_number: match.a_number,
+          b_number: match.b_number,
+          seize_time: match.seize_a,
+          your_duration: match.duration_a,
+          provider_duration: match.duration_b,
+          your_rate: match.rate_a,
+          provider_rate: match.rate_b,
+          your_cost: yourCost,
+          provider_cost: providerCost,
+          cost_difference: costDiff,
+          your_lrn: match.lrn_a,
+          provider_lrn: match.lrn_b,
+          source_index_a: match.index_a,
+          source_index_b: match.index_b,
+        });
+      }
+
+      // Only report cost difference if there's a meaningful cost difference (> $0.0001)
+      // AND it's not already reported as LRN mismatch
+      if (Math.abs(costDiff) > 0.0001 && !lrnMismatch) {
         // Determine the primary cause of the discrepancy
         const durationDiff = match.duration_a - match.duration_b;
         const rateDiff = match.rate_a - match.rate_b;
@@ -747,6 +783,7 @@ export async function POST(request: NextRequest) {
       durationMismatches: durationMismatches.length,
       rateMismatches: rateMismatches.length,
       costMismatches: costMismatches.length,
+      lrnMismatches: lrnMismatchCount,
       totalDiscrepancies: discrepancies.length,
       // Monetary impact breakdown (from discrepancies analysis)
       monetaryImpact: Math.round(discrepancies.reduce((sum, d) => sum + (d.cost_difference || 0), 0) * 100) / 100,
@@ -809,12 +846,13 @@ export async function POST(request: NextRequest) {
     // Sort final result by type then cost for consistent display
     const typeOrder: Record<string, number> = {
       missing_in_a: 1,
-      duration_mismatch: 2,
-      rate_mismatch: 3,
-      cost_mismatch: 4,
-      missing_in_b: 5,
-      zero_duration_in_a: 6,
-      zero_duration_in_b: 7,
+      lrn_mismatch: 2,
+      duration_mismatch: 3,
+      rate_mismatch: 4,
+      cost_mismatch: 5,
+      missing_in_b: 6,
+      zero_duration_in_a: 7,
+      zero_duration_in_b: 8,
     };
 
     sampledDiscrepancies.sort((a, b) => {

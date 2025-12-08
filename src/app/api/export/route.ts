@@ -12,6 +12,8 @@ interface Discrepancy {
   your_cost: number | null;
   provider_cost: number | null;
   cost_difference: number;
+  your_lrn?: string | null;
+  provider_lrn?: string | null;
   source_index?: number;
   source_index_a?: number;
   source_index_b?: number;
@@ -40,6 +42,7 @@ interface Summary {
   durationMismatches: number;
   rateMismatches: number;
   costMismatches?: number;
+  lrnMismatches?: number;
   totalDiscrepancies: number;
   monetaryImpact: number;
   impactBreakdown?: {
@@ -64,6 +67,8 @@ export async function POST(request: NextRequest) {
       "A-Number",
       "B-Number",
       "Seize Time",
+      "Your LRN",
+      "Provider LRN",
       "Your Duration (s)",
       "Provider Duration (s)",
       "Your Rate",
@@ -100,19 +105,23 @@ export async function POST(request: NextRequest) {
             ? "Unanswered (Provider)"
             : d.type === "zero_duration_in_b"
               ? "Unanswered (Yours)"
-              : d.type === "duration_mismatch"
-                ? "Duration Mismatch"
-                : d.type === "rate_mismatch"
-                  ? "Rate Mismatch"
-                  : d.type === "cost_mismatch"
-                    ? "Cost Mismatch"
-                    : d.type;
+              : d.type === "lrn_mismatch"
+                ? "LRN Mismatch"
+                : d.type === "duration_mismatch"
+                  ? "Duration Mismatch"
+                  : d.type === "rate_mismatch"
+                    ? "Rate Mismatch"
+                    : d.type === "cost_mismatch"
+                      ? "Cost Mismatch"
+                      : d.type;
 
       return [
         typeLabel,
         d.a_number,
         d.b_number,
         d.seize_time ? new Date(d.seize_time * 1000).toISOString() : "",
+        d.your_lrn ?? "",
+        d.provider_lrn ?? "",
         d.your_duration ?? "",
         d.provider_duration ?? "",
         d.your_rate?.toFixed(4) ?? "",
@@ -151,6 +160,7 @@ export async function POST(request: NextRequest) {
       ["Duration Mismatches", summary.durationMismatches],
       ["Rate Mismatches", summary.rateMismatches],
       ["Combined Mismatches", summary.costMismatches ?? 0],
+      ["LRN Mismatches", summary.lrnMismatches ?? 0],
       ["Zero Duration (Unanswered) - Yours", summary.zeroDurationInYours ?? 0],
       ["Zero Duration (Unanswered) - Provider", summary.zeroDurationInProvider ?? 0],
       ["Total Discrepancies", summary.totalDiscrepancies],
