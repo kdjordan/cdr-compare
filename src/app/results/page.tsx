@@ -389,7 +389,7 @@ export default function ResultsPage() {
               >
                 <div className="flex items-center gap-3">
                   <Info className="w-5 h-5 text-accent" />
-                  <h2 className="font-display font-semibold text-lg">Analysis Synopsis</h2>
+                  <h2 className="font-display font-semibold text-lg">Synopsis</h2>
                 </div>
                 {showSynopsis ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
               </button>
