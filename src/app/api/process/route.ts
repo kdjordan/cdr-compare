@@ -493,12 +493,17 @@ export async function POST(request: NextRequest) {
       index_b: number;
     }
 
-    // Get all potential matches first
     // Use 60-second tolerance to account for minute-level precision in some systems
     const TIME_TOLERANCE_SECONDS = 60;
-    const potentialMatches = db
-      .prepare(
-        `
+
+    // MEMORY OPTIMIZATION: Use iterate() instead of all() to avoid loading all matches into memory
+    // Apply 1-to-1 matching: each A and B record can only be matched once
+    // Prefer exact time matches, then closest duration matches
+    const usedAIds = new Set<number>();
+    const usedBIds = new Set<number>();
+    const matches: MatchRow[] = [];
+
+    const matchQuery = db.prepare(`
       SELECT
         a.id as id_a,
         b.id as id_b,
@@ -513,26 +518,18 @@ export async function POST(request: NextRequest) {
         a.lrn as lrn_a,
         b.lrn as lrn_b,
         a.raw_index as index_a,
-        b.raw_index as index_b,
-        ABS(COALESCE(a.seize_time, 0) - COALESCE(b.seize_time, 0)) as time_diff,
-        ABS(a.billed_duration - b.billed_duration) as duration_diff
+        b.raw_index as index_b
       FROM records_a a
       INNER JOIN records_b b
         ON a.a_number = b.a_number
         AND a.b_number = b.b_number
         AND ABS(COALESCE(a.seize_time, 0) - COALESCE(b.seize_time, 0)) <= ${TIME_TOLERANCE_SECONDS}
-      ORDER BY time_diff ASC, duration_diff ASC
-    `
-      )
-      .all() as (MatchRow & { time_diff: number; duration_diff: number })[];
+      ORDER BY ABS(COALESCE(a.seize_time, 0) - COALESCE(b.seize_time, 0)) ASC,
+               ABS(a.billed_duration - b.billed_duration) ASC
+    `);
 
-    // Apply 1-to-1 matching: each A and B record can only be matched once
-    // Prefer exact time matches, then closest duration matches
-    const usedAIds = new Set<number>();
-    const usedBIds = new Set<number>();
-    const matches: MatchRow[] = [];
-
-    for (const match of potentialMatches) {
+    // Iterate through matches one at a time instead of loading all into memory
+    for (const match of matchQuery.iterate() as Iterable<MatchRow>) {
       if (!usedAIds.has(match.id_a) && !usedBIds.has(match.id_b)) {
         matches.push(match);
         usedAIds.add(match.id_a);
@@ -542,12 +539,29 @@ export async function POST(request: NextRequest) {
 
     console.log(`Found ${matches.length} matched records (1-to-1)`);
 
-    // Get IDs of matched records
-    const matchedAIds = new Set(matches.map((m) => m.id_a));
-    const matchedBIds = new Set(matches.map((m) => m.id_b));
-
-    // Find unmatched records
+    // MEMORY OPTIMIZATION: Store matched IDs in temp tables for efficient SQL queries
+    // This avoids loading all records into JS memory
     console.log("Finding unmatched records...");
+
+    // Create temp tables to store matched IDs
+    db.exec(`
+      CREATE TEMP TABLE matched_a_ids (id INTEGER PRIMARY KEY);
+      CREATE TEMP TABLE matched_b_ids (id INTEGER PRIMARY KEY);
+    `);
+
+    // Batch insert matched IDs
+    const insertMatchedA = db.prepare(`INSERT INTO matched_a_ids (id) VALUES (?)`);
+    const insertMatchedB = db.prepare(`INSERT INTO matched_b_ids (id) VALUES (?)`);
+
+    const insertMatchedIds = db.transaction(() => {
+      for (const m of matches) {
+        insertMatchedA.run(m.id_a);
+        insertMatchedB.run(m.id_b);
+      }
+    });
+    insertMatchedIds();
+
+    // Get unmatched records using SQL (much more memory efficient)
     interface RecordRow {
       id: number;
       a_number: string;
@@ -557,27 +571,38 @@ export async function POST(request: NextRequest) {
       rate: number;
       raw_index: number;
     }
-    const allRecordsA = db
-      .prepare(
-        `
-      SELECT id, a_number, b_number, seize_time, billed_duration, rate, raw_index
-      FROM records_a
-    `
-      )
-      .all() as RecordRow[];
-    const unmatchedA = allRecordsA.filter((r) => !matchedAIds.has(r.id));
 
-    const allRecordsB = db
-      .prepare(
-        `
-      SELECT id, a_number, b_number, seize_time, billed_duration, rate, raw_index
-      FROM records_b
-    `
-      )
-      .all() as RecordRow[];
-    const unmatchedB = allRecordsB.filter((r) => !matchedBIds.has(r.id));
+    // MEMORY OPTIMIZATION: Get counts first, then iterate for discrepancy processing
+    const unmatchedCountA = (db.prepare(`
+      SELECT COUNT(*) as count
+      FROM records_a a
+      LEFT JOIN matched_a_ids m ON a.id = m.id
+      WHERE m.id IS NULL
+    `).get() as { count: number }).count;
 
-    console.log(`Unmatched in A: ${unmatchedA.length}, Unmatched in B: ${unmatchedB.length}`);
+    const unmatchedCountB = (db.prepare(`
+      SELECT COUNT(*) as count
+      FROM records_b b
+      LEFT JOIN matched_b_ids m ON b.id = m.id
+      WHERE m.id IS NULL
+    `).get() as { count: number }).count;
+
+    console.log(`Unmatched in A: ${unmatchedCountA}, Unmatched in B: ${unmatchedCountB}`);
+
+    // Prepare iterators for unmatched records (will be used later for discrepancy building)
+    const unmatchedAQuery = db.prepare(`
+      SELECT a.id, a.a_number, a.b_number, a.seize_time, a.billed_duration, a.rate, a.raw_index
+      FROM records_a a
+      LEFT JOIN matched_a_ids m ON a.id = m.id
+      WHERE m.id IS NULL
+    `);
+
+    const unmatchedBQuery = db.prepare(`
+      SELECT b.id, b.a_number, b.b_number, b.seize_time, b.billed_duration, b.rate, b.raw_index
+      FROM records_b b
+      LEFT JOIN matched_b_ids m ON b.id = m.id
+      WHERE m.id IS NULL
+    `);
 
     // Build discrepancies list
     // Types now include zero_duration variants to separate unanswered attempts from real billing issues
@@ -607,8 +632,9 @@ export async function POST(request: NextRequest) {
     let billedMissingInA = 0; // Provider has billed calls you don't have (real issue)
     let billedMissingInB = 0; // You have billed calls provider doesn't have (real issue)
 
+    // MEMORY OPTIMIZATION: Use iteration for unmatched records
     // Missing in B (You have it, provider doesn't)
-    for (const record of unmatchedA) {
+    for (const record of unmatchedAQuery.iterate() as Iterable<RecordRow>) {
       const yourCost = calculateCallCost(record.billed_duration, record.rate);
       const isZeroDuration = record.billed_duration === 0;
 
@@ -635,7 +661,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Missing in A (Provider has it, you don't)
-    for (const record of unmatchedB) {
+    for (const record of unmatchedBQuery.iterate() as Iterable<RecordRow>) {
       const providerCost = calculateCallCost(record.billed_duration, record.rate);
       const isZeroDuration = record.billed_duration === 0;
 
@@ -723,22 +749,41 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Calculate TOTAL billed amounts from each CDR (the key numbers for invoice comparison)
-    // Your total = sum of all calls in your CDR
-    let yourTotalBilled = 0;
-    let yourTotalSeconds = 0;
-    for (const record of allRecordsA) {
-      yourTotalBilled += calculateCallCost(record.billed_duration, record.rate);
-      yourTotalSeconds += record.billed_duration;
+    // MEMORY OPTIMIZATION: Calculate totals using SQL aggregation
+    // Note: We use a SQL formula for 6-second increment billing: CEIL(duration/6) * rate / 10
+    interface TotalsRow {
+      total_seconds: number;
+      total_cost: number;
     }
 
-    // Provider total = sum of all calls in provider CDR
-    let providerTotalBilled = 0;
-    let providerTotalSeconds = 0;
-    for (const record of allRecordsB) {
-      providerTotalBilled += calculateCallCost(record.billed_duration, record.rate);
-      providerTotalSeconds += record.billed_duration;
-    }
+    const totalsA = db.prepare(`
+      SELECT
+        SUM(billed_duration) as total_seconds,
+        SUM(
+          CASE WHEN billed_duration > 0
+            THEN (((billed_duration + 5) / 6) * rate / 10.0)
+            ELSE 0
+          END
+        ) as total_cost
+      FROM records_a
+    `).get() as TotalsRow;
+
+    const totalsB = db.prepare(`
+      SELECT
+        SUM(billed_duration) as total_seconds,
+        SUM(
+          CASE WHEN billed_duration > 0
+            THEN (((billed_duration + 5) / 6) * rate / 10.0)
+            ELSE 0
+          END
+        ) as total_cost
+      FROM records_b
+    `).get() as TotalsRow;
+
+    const yourTotalBilled = totalsA.total_cost || 0;
+    const yourTotalSeconds = totalsA.total_seconds || 0;
+    const providerTotalBilled = totalsB.total_cost || 0;
+    const providerTotalSeconds = totalsB.total_seconds || 0;
 
     // Convert seconds to minutes for display
     const yourTotalMinutes = Math.round((yourTotalSeconds / 60) * 100) / 100;
@@ -772,8 +817,8 @@ export async function POST(request: NextRequest) {
       providerTotalMinutes,
       minutesDifference: Math.round((yourTotalMinutes - providerTotalMinutes) * 100) / 100,
       // Original totals (includes zero-duration)
-      missingInYours: unmatchedB.length,
-      missingInProvider: unmatchedA.length,
+      missingInYours: unmatchedCountB,
+      missingInProvider: unmatchedCountA,
       // New: separated by billing relevance
       zeroDurationInYours: zeroDurationInA, // Your 0-sec calls not in provider (likely attempts)
       zeroDurationInProvider: zeroDurationInB, // Provider 0-sec calls not in yours (likely attempts)
