@@ -62,15 +62,62 @@ Core matching, cost comparison, results display, and security hardening complete
 
 ---
 
-## Latest Completed: LRN Mismatch Feature (Dec 7, 2025)
+## Latest Completed: Production Memory Optimization (Dec 8, 2025)
 
-### What Was Done
+### The Problem
+Production deployment was crashing with "JavaScript heap out of memory" when processing large CDR files (~375MB combined, 700k+ rows each). The app worked fine on localhost but failed in the Coolify Docker container.
+
+**Root Cause:** The API was using `.all()` on SQLite queries, which loads ALL results into JavaScript memory at once. With 700k+ matched records, this exceeded Node.js heap limits.
+
+### The Fix
+Optimized `/src/app/api/process/route.ts` to use memory-efficient patterns:
+
+1. **Matching Query**: Changed from `.all()` to `.iterate()` - processes rows one at a time
+2. **Unmatched Records**: Now uses SQL temp tables + LEFT JOINs instead of loading all records into JS and filtering
+3. **Billing Totals**: Uses SQL `SUM()` aggregation instead of iterating through all records in JS
+4. **Discrepancy Building**: Uses iteration instead of loading all unmatched records at once
+
+### Production Environment Setup
+For Coolify/Docker deployments processing large files:
+- **Environment Variable**: `NODE_OPTIONS=--max-old-space-size=4096`
+- **Container Memory**: Recommend 4GB+ available RAM
+- **Body Size Limit**: `proxyClientMaxBodySize: '250mb'` in next.config.js
+
+---
+
+## File Size Limitations
+
+### Current Tested Limits
+| File Size (Zipped) | Uncompressed | Status |
+|-------------------|--------------|--------|
+| 110MB combined | ~500-800MB | Working |
+| 375MB combined | ~1.5GB+ | Working after optimization |
+
+### Estimated Safe Limits
+| Scenario | Combined File Size | Approximate Rows |
+|----------|-------------------|------------------|
+| Safe | ~500-600 MB | ~1.5-2 million each |
+| Pushing it | ~700-800 MB | ~2-2.5 million each |
+| Risky | 1+ GB | May still OOM |
+
+### Remaining Bottleneck
+File parsing still loads entire CSV into memory before inserting into SQLite:
+```typescript
+const dataA = await parseFile(fileAPath, fileA.name);  // All rows in memory
+```
+
+To handle 1GB+ files, would need streaming CSV parsing (future enhancement).
+
+---
+
+## Previous: LRN Mismatch Feature (Dec 7, 2025)
+
 Added LRN (Location Routing Number) comparison to detect when carriers have different LRN dip results, which can cause billing rate discrepancies.
 
 **Changes:**
 
 1. **Presets** (`/src/lib/presets.ts`)
-   - Veriswitch: maps `urn` column to `lrn`
+   - Veriswitch: maps `lrn` column to `lrn`
    - SipNav: maps `lrn_number` column to `lrn`
    - LRN is now a required field in preset validation
 
@@ -87,6 +134,7 @@ Added LRN (Location Routing Number) comparison to detect when carriers have diff
 4. **API** (`/src/app/api/process/route.ts`)
    - LRN stored in database tables
    - LRN comparison during matching - creates `lrn_mismatch` discrepancy when LRNs differ
+   - LRN values normalized same as phone numbers (strips leading "1")
    - Added `lrnMismatches` count to summary
 
 5. **Results Page** (`/src/app/results/page.tsx`)
@@ -94,6 +142,7 @@ Added LRN (Location Routing Number) comparison to detect when carriers have diff
    - New pink "LRN Mismatches" card in synopsis (shows count of mismatches)
    - LRN columns (Your LRN, Provider LRN) shown when LRN filter is selected
    - Pink color theme for LRN mismatch badges
+   - Fixed difference column to show 4 decimal places (was showing $-0.00)
 
 6. **CSV Export** (`/src/app/api/export/route.ts`)
    - Added "Your LRN" and "Provider LRN" columns
@@ -108,6 +157,10 @@ Added total minutes display to help users cross-reference CDR data with invoices
 ---
 
 ## Next Task: (none scheduled)
+
+### Future Enhancement Ideas
+- **Streaming CSV parsing** - To handle 1GB+ files without memory issues
+- **Progress indicator** - Show real-time progress during large file processing
 
 ---
 
@@ -186,4 +239,4 @@ function calculateCallCost(durationSeconds: number, ratePerMinute: number): numb
 - **765,979** matched records (97.8% match rate)
 - Billing totals calculated and displayed
 - All discrepancy categories populated
-te
+- Production deployment working after memory optimization
