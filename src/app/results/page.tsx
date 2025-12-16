@@ -20,10 +20,14 @@ import {
   TrendingDown,
   Phone,
   PhoneOff,
+  PhoneForwarded,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
 } from "lucide-react";
 import { useReconciliation, Discrepancy } from "@/context/ReconciliationContext";
 
-type DiscrepancyFilter = "all" | "missing_in_a" | "missing_in_b" | "duration_mismatch" | "rate_mismatch" | "cost_mismatch" | "lrn_mismatch" | "zero_duration";
+type DiscrepancyFilter = "all" | "missing_in_a" | "missing_in_b" | "duration_mismatch" | "rate_mismatch" | "cost_mismatch" | "lrn_mismatch" | "zero_duration" | "hung_calls";
 
 const FILTER_OPTIONS: { value: DiscrepancyFilter; label: string; description?: string }[] = [
   { value: "all", label: "All", description: "All discrepancies" },
@@ -34,10 +38,11 @@ const FILTER_OPTIONS: { value: DiscrepancyFilter; label: string; description?: s
   { value: "rate_mismatch", label: "Rate", description: "Same call, different rate" },
   { value: "cost_mismatch", label: "Combined", description: "Both rate & duration differ" },
   { value: "zero_duration", label: "Unanswered", description: "Zero-duration call attempts" },
+  { value: "hung_calls", label: "Hung Calls", description: "Potential stuck switch - identical durations" },
 ];
 
 // Column visibility based on filter type
-type ColumnKey = "type" | "a_number" | "b_number" | "time" | "your_dur" | "prov_dur" | "your_cost" | "prov_cost" | "difference" | "your_row" | "prov_row" | "your_lrn" | "prov_lrn";
+type ColumnKey = "type" | "a_number" | "b_number" | "time" | "your_dur" | "prov_dur" | "your_cost" | "prov_cost" | "difference" | "your_row" | "prov_row" | "your_lrn" | "prov_lrn" | "hung_count";
 
 const getVisibleColumns = (filter: DiscrepancyFilter): Set<ColumnKey> => {
   const base: ColumnKey[] = ["a_number", "b_number", "time"];
@@ -59,11 +64,14 @@ const getVisibleColumns = (filter: DiscrepancyFilter): Set<ColumnKey> => {
       // Compare durations
       return new Set([...base, "your_dur", "prov_dur", "your_cost", "prov_cost", "difference", "your_row", "prov_row"]);
     case "rate_mismatch":
-      // Compare costs (rates reflected in cost)
-      return new Set([...base, "your_dur", "prov_dur", "your_cost", "prov_cost", "difference", "your_row", "prov_row"]);
+      // Compare costs (rates reflected in cost) - include LRNs since rate differences often relate to LRN dips
+      return new Set([...base, "your_lrn", "prov_lrn", "your_dur", "prov_dur", "your_cost", "prov_cost", "difference", "your_row", "prov_row"]);
     case "cost_mismatch":
       // Show everything for combined mismatches
       return new Set([...base, "your_dur", "prov_dur", "your_cost", "prov_cost", "difference", "your_row", "prov_row"]);
+    case "hung_calls":
+      // Show hung call specific columns
+      return new Set([...base, "type", "your_dur", "prov_dur", "your_cost", "prov_cost", "hung_count", "your_row", "prov_row"]);
     case "all":
     default:
       // Show all columns including type
@@ -116,19 +124,23 @@ function getTypeLabel(type: Discrepancy["type"]): string {
       return "Rate Mismatch";
     case "cost_mismatch":
       return "Cost Mismatch";
+    case "hung_call_yours":
+      return "Hung Call (Yours)";
+    case "hung_call_provider":
+      return "Hung Call (Provider)";
     default:
       return type;
   }
 }
 
 function formatSourceRow(d: Discrepancy): { yours: string; provider: string } {
-  if (d.type === "missing_in_b" || d.type === "zero_duration_in_b") {
+  if (d.type === "missing_in_b" || d.type === "zero_duration_in_b" || d.type === "hung_call_yours") {
     // Record exists only in your file
     return {
       yours: d.source_index != null ? `${d.source_index + 2}` : "-",
       provider: "-",
     };
-  } else if (d.type === "missing_in_a" || d.type === "zero_duration_in_a") {
+  } else if (d.type === "missing_in_a" || d.type === "zero_duration_in_a" || d.type === "hung_call_provider") {
     // Record exists only in provider file
     return {
       yours: "-",
@@ -160,10 +172,34 @@ function getTypeColor(type: Discrepancy["type"]): string {
       return "text-purple-500 bg-purple-500/10 border-purple-500/20";
     case "cost_mismatch":
       return "text-orange-500 bg-orange-500/10 border-orange-500/20";
+    case "hung_call_yours":
+    case "hung_call_provider":
+      return "text-cyan-500 bg-cyan-500/10 border-cyan-500/20";
     default:
       return "text-muted-foreground bg-muted/10 border-muted/20";
   }
 }
+
+type SortField = "duration" | "group_size" | "time" | "your_cost" | "prov_cost" | "difference" | "a_number" | "b_number" | null;
+type SortDirection = "asc" | "desc";
+
+// Column tooltips explaining what each column shows
+const COLUMN_TOOLTIPS: Record<string, string> = {
+  type: "The type of discrepancy detected",
+  a_number: "Calling party number (originating number)",
+  b_number: "Called party number (destination number)",
+  time: "When the call was initiated",
+  your_lrn: "Location Routing Number from your CDR - used for rate determination",
+  prov_lrn: "Location Routing Number from provider's CDR",
+  your_dur: "Call duration recorded in your CDR",
+  prov_dur: "Call duration recorded in provider's CDR",
+  your_cost: "Calculated cost based on your CDR (duration × rate)",
+  prov_cost: "Calculated cost based on provider's CDR",
+  difference: "Cost difference: positive = you're owed, negative = you owe",
+  hung_count: "Number of calls with this exact duration - higher numbers suggest stuck switch",
+  your_row: "Row number in your original file",
+  prov_row: "Row number in provider's original file",
+};
 
 export default function ResultsPage() {
   const router = useRouter();
@@ -172,6 +208,8 @@ export default function ResultsPage() {
   const [isExporting, setIsExporting] = useState(false);
   const [showSynopsis, setShowSynopsis] = useState(true);
   const [hideZeroDuration, setHideZeroDuration] = useState(true);
+  const [sortField, setSortField] = useState<SortField>(null);
+  const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
 
   // Redirect if no results
   useEffect(() => {
@@ -179,6 +217,12 @@ export default function ResultsPage() {
       router.push("/");
     }
   }, [results, router]);
+
+  // Reset sort when filter changes
+  useEffect(() => {
+    setSortField(null);
+    setSortDirection("desc");
+  }, [filter]);
 
   if (!results) {
     return null;
@@ -207,12 +251,87 @@ export default function ResultsPage() {
         return discrepancies.filter(d => d.type === "cost_mismatch");
       case "zero_duration":
         return discrepancies.filter(d => d.type === "zero_duration_in_a" || d.type === "zero_duration_in_b");
+      case "hung_calls":
+        return discrepancies.filter(d => d.type === "hung_call_yours" || d.type === "hung_call_provider");
       default:
         return discrepancies;
     }
   };
 
-  const filteredDiscrepancies = getFilteredDiscrepancies();
+  // Sort discrepancies
+  const sortDiscrepancies = (items: Discrepancy[]): Discrepancy[] => {
+    if (!sortField) {
+      // Default sort for hung calls: by duration descending (groups together)
+      if (filter === "hung_calls") {
+        return [...items].sort((a, b) => {
+          const durA = a.your_duration ?? a.provider_duration ?? 0;
+          const durB = b.your_duration ?? b.provider_duration ?? 0;
+          return durB - durA; // Descending by default
+        });
+      }
+      return items;
+    }
+
+    return [...items].sort((a, b) => {
+      let valA: number | string = 0;
+      let valB: number | string = 0;
+
+      switch (sortField) {
+        case "duration":
+          valA = a.your_duration ?? a.provider_duration ?? 0;
+          valB = b.your_duration ?? b.provider_duration ?? 0;
+          break;
+        case "group_size":
+          valA = a.hung_call_count ?? 0;
+          valB = b.hung_call_count ?? 0;
+          break;
+        case "time":
+          valA = a.seize_time ?? 0;
+          valB = b.seize_time ?? 0;
+          break;
+        case "your_cost":
+          valA = a.your_cost ?? 0;
+          valB = b.your_cost ?? 0;
+          break;
+        case "prov_cost":
+          valA = a.provider_cost ?? 0;
+          valB = b.provider_cost ?? 0;
+          break;
+        case "difference":
+          valA = Math.abs(a.cost_difference ?? 0);
+          valB = Math.abs(b.cost_difference ?? 0);
+          break;
+        case "a_number":
+          valA = a.a_number ?? "";
+          valB = b.a_number ?? "";
+          break;
+        case "b_number":
+          valA = b.b_number ?? "";
+          valB = b.b_number ?? "";
+          break;
+      }
+
+      // Handle string comparison for phone numbers
+      if (typeof valA === "string" && typeof valB === "string") {
+        return sortDirection === "asc"
+          ? valA.localeCompare(valB)
+          : valB.localeCompare(valA);
+      }
+
+      return sortDirection === "asc" ? (valA as number) - (valB as number) : (valB as number) - (valA as number);
+    });
+  };
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
+    } else {
+      setSortField(field);
+      setSortDirection("desc");
+    }
+  };
+
+  const filteredDiscrepancies = sortDiscrepancies(getFilteredDiscrepancies());
 
   const handleExport = async () => {
     setIsExporting(true);
@@ -587,6 +706,44 @@ export default function ResultsPage() {
                     </div>
                   )}
 
+                  {/* Hung Calls Section - Potential stuck switch issues */}
+                  {((summary.hungCallsInYours ?? 0) > 0 || (summary.hungCallsInProvider ?? 0) > 0) && (
+                    <button
+                      onClick={() => setFilter("hung_calls")}
+                      className={`w-full p-4 rounded-lg text-left transition-all ${
+                        filter === "hung_calls"
+                          ? "bg-cyan-500/15 border-2 border-cyan-500/40 ring-2 ring-cyan-500/20"
+                          : "bg-cyan-500/5 border border-cyan-500/20 hover:bg-cyan-500/10"
+                      }`}
+                    >
+                      <div className="flex items-start gap-3">
+                        <PhoneForwarded className="w-5 h-5 text-cyan-500 mt-0.5" />
+                        <div>
+                          <p className="font-medium mb-1 text-cyan-500">
+                            {((summary.hungCallsInYours ?? 0) + (summary.hungCallsInProvider ?? 0)).toLocaleString()} potential hung calls detected
+                          </p>
+                          <p className="text-sm text-muted-foreground mb-2">
+                            Calls with identical durations (3+ calls with exact same duration &gt; 30s) may indicate a stuck switch issue.
+                          </p>
+                          <div className="flex gap-4 text-sm">
+                            {(summary.hungCallsInYours ?? 0) > 0 && (
+                              <span className="text-muted-foreground">
+                                <span className="font-medium text-foreground">{(summary.hungCallsInYours ?? 0).toLocaleString()}</span> in your records
+                                <span className="text-xs ml-1">({summary.hungCallGroupsYours ?? 0} groups)</span>
+                              </span>
+                            )}
+                            {(summary.hungCallsInProvider ?? 0) > 0 && (
+                              <span className="text-muted-foreground">
+                                <span className="font-medium text-foreground">{(summary.hungCallsInProvider ?? 0).toLocaleString()}</span> in provider records
+                                <span className="text-xs ml-1">({summary.hungCallGroupsProvider ?? 0} groups)</span>
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </button>
+                  )}
+
                   {/* Zero Duration Explanation - Clickable */}
                   {totalZeroDuration > 0 && (
                     <button
@@ -701,76 +858,82 @@ export default function ResultsPage() {
                 const visibleColumns = getVisibleColumns(filter);
                 const colCount = visibleColumns.size;
 
+                // Helper to render sortable header with tooltip
+                const renderHeader = (
+                  columnKey: string,
+                  label: string,
+                  sortKey: SortField | null,
+                  align: "left" | "right" | "center" = "left"
+                ) => {
+                  const isSortable = sortKey !== null;
+                  const isActive = sortField === sortKey;
+                  const tooltip = COLUMN_TOOLTIPS[columnKey];
+                  const alignClass = align === "right" ? "text-right justify-end" : align === "center" ? "text-center justify-center" : "text-left";
+
+                  return (
+                    <th
+                      className={`px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider ${alignClass} ${isSortable ? "cursor-pointer hover:text-foreground select-none" : ""} group relative`}
+                      onClick={isSortable ? () => handleSort(sortKey) : undefined}
+                      title={tooltip}
+                    >
+                      <span className={`flex items-center gap-1 ${alignClass}`}>
+                        {label}
+                        {isSortable && (
+                          isActive
+                            ? (sortDirection === "asc" ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />)
+                            : <ArrowUpDown className="w-3 h-3 opacity-40" />
+                        )}
+                      </span>
+                    </th>
+                  );
+                };
+
                 return (
                   <div className="overflow-x-auto overflow-y-auto max-h-[500px]">
                     <table className="w-full min-w-max">
                       <thead className="sticky top-0 bg-card z-10">
                         <tr className="border-b border-border bg-muted/30">
-                          {visibleColumns.has("type") && (
-                            <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                              Type
-                            </th>
+                          {visibleColumns.has("type") && renderHeader("type", "Type", null)}
+                          {visibleColumns.has("a_number") && renderHeader("a_number", "A-Number", "a_number")}
+                          {visibleColumns.has("b_number") && renderHeader("b_number", "B-Number", "b_number")}
+                          {visibleColumns.has("time") && renderHeader("time", "Time", "time")}
+                          {visibleColumns.has("your_lrn") && renderHeader("your_lrn", "Your LRN", null)}
+                          {visibleColumns.has("prov_lrn") && renderHeader("prov_lrn", "Prov. LRN", null)}
+                          {visibleColumns.has("your_dur") && renderHeader(
+                            "your_dur",
+                            filter === "missing_in_b" || filter === "hung_calls" ? "Duration" : "Your Dur.",
+                            "duration"
                           )}
-                          {visibleColumns.has("a_number") && (
-                            <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                              A-Number
-                            </th>
+                          {visibleColumns.has("prov_dur") && renderHeader(
+                            "prov_dur",
+                            filter === "missing_in_a" || filter === "hung_calls" ? "Duration" : "Prov. Dur.",
+                            "duration"
                           )}
-                          {visibleColumns.has("b_number") && (
-                            <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                              B-Number
-                            </th>
+                          {visibleColumns.has("your_cost") && renderHeader(
+                            "your_cost",
+                            filter === "missing_in_b" ? "Cost" : "Your Cost",
+                            "your_cost",
+                            "right"
                           )}
-                          {visibleColumns.has("time") && (
-                            <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                              <Clock className="w-3 h-3 inline mr-1" />
-                              Time
-                            </th>
+                          {visibleColumns.has("prov_cost") && renderHeader(
+                            "prov_cost",
+                            filter === "missing_in_a" ? "Cost" : "Prov. Cost",
+                            "prov_cost",
+                            "right"
                           )}
-                          {visibleColumns.has("your_lrn") && (
-                            <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                              Your LRN
-                            </th>
+                          {visibleColumns.has("hung_count") && renderHeader("hung_count", "Group Size", "group_size", "center")}
+                          {visibleColumns.has("difference") && renderHeader("difference", "Difference", "difference", "right")}
+                          {visibleColumns.has("your_row") && renderHeader(
+                            "your_row",
+                            filter === "missing_in_b" ? "Source Row" : "Your Row",
+                            null,
+                            "center"
                           )}
-                          {visibleColumns.has("prov_lrn") && (
-                            <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                              Prov. LRN
-                            </th>
-                          )}
-                          {visibleColumns.has("your_dur") && (
-                            <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                              {filter === "missing_in_b" ? "Duration" : "Your Dur."}
-                            </th>
-                          )}
-                          {visibleColumns.has("prov_dur") && (
-                            <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                              {filter === "missing_in_a" ? "Duration" : "Prov. Dur."}
-                            </th>
-                          )}
-                          {visibleColumns.has("your_cost") && (
-                            <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                              {filter === "missing_in_b" ? "Cost" : "Your Cost"}
-                            </th>
-                          )}
-                          {visibleColumns.has("prov_cost") && (
-                            <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                              {filter === "missing_in_a" ? "Cost" : "Prov. Cost"}
-                            </th>
-                          )}
-                          {visibleColumns.has("difference") && (
-                            <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                              Difference
-                            </th>
-                          )}
-                          {visibleColumns.has("your_row") && (
-                            <th className="px-4 py-3 text-center text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                              {filter === "missing_in_b" ? "Source Row" : "Your Row"}
-                            </th>
-                          )}
-                          {visibleColumns.has("prov_row") && (
-                            <th className="px-4 py-3 text-center text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                              {filter === "missing_in_a" ? "Source Row" : "Prov. Row"}
-                            </th>
+                          {visibleColumns.has("prov_row") && renderHeader(
+                            "prov_row",
+                            filter === "missing_in_a" ? "Source Row" : "Prov. Row",
+                            null,
+                            "center"
                           )}
                         </tr>
                       </thead>
@@ -817,6 +980,11 @@ export default function ResultsPage() {
                               )}
                               {visibleColumns.has("prov_cost") && (
                                 <td className="px-4 py-3 font-mono text-sm text-right">{formatCost(d.provider_cost)}</td>
+                              )}
+                              {visibleColumns.has("hung_count") && (
+                                <td className="px-4 py-3 font-mono text-sm text-center text-cyan-500 font-bold">
+                                  {d.hung_call_count ?? "-"}
+                                </td>
                               )}
                               {visibleColumns.has("difference") && (
                                 <td className={`px-4 py-3 font-mono text-sm text-right ${

@@ -51,22 +51,6 @@ export interface Discrepancy {
   source_index?: number;
   source_index_a?: number;
   source_index_b?: number;
-  // For hung calls - how many calls share this exact duration
-  hung_call_count?: number;
-}
-
-export interface HungCallGroup {
-  duration: number;
-  count: number;
-  source: "yours" | "provider";
-  records: {
-    a_number: string;
-    b_number: string;
-    seize_time: number | null;
-    cost: number | null;
-    rate: number | null;
-    source_index: number;
-  }[];
 }
 
 export interface ImpactBreakdown {
@@ -105,11 +89,6 @@ export interface ReconciliationSummary {
   totalDiscrepancies: number;
   monetaryImpact: number;
   impactBreakdown: ImpactBreakdown;
-  // Hung calls (potential stuck switch issues)
-  hungCallsInYours: number;
-  hungCallsInProvider: number;
-  hungCallGroupsYours: number;
-  hungCallGroupsProvider: number;
 }
 
 export interface ReconciliationResults {

@@ -17,6 +17,7 @@ interface Discrepancy {
   source_index?: number;
   source_index_a?: number;
   source_index_b?: number;
+  hung_call_count?: number;
 }
 
 interface Summary {
@@ -52,6 +53,11 @@ interface Summary {
     rateMismatches: number;
     costMismatches: number;
   };
+  // Hung calls
+  hungCallsInYours?: number;
+  hungCallsInProvider?: number;
+  hungCallGroupsYours?: number;
+  hungCallGroupsProvider?: number;
 }
 
 export async function POST(request: NextRequest) {
@@ -76,6 +82,7 @@ export async function POST(request: NextRequest) {
       "Your Cost",
       "Provider Cost",
       "Difference ($)",
+      "Hung Call Group Size",
       "Your Source Row",
       "Provider Source Row",
     ];
@@ -85,10 +92,10 @@ export async function POST(request: NextRequest) {
       let yourSourceRow = "";
       let providerSourceRow = "";
 
-      if (d.type === "missing_in_b" || d.type === "zero_duration_in_b") {
+      if (d.type === "missing_in_b" || d.type === "zero_duration_in_b" || d.type === "hung_call_yours") {
         // Record exists only in your file
         yourSourceRow = d.source_index != null ? String(d.source_index + 2) : "";
-      } else if (d.type === "missing_in_a" || d.type === "zero_duration_in_a") {
+      } else if (d.type === "missing_in_a" || d.type === "zero_duration_in_a" || d.type === "hung_call_provider") {
         // Record exists only in provider file
         providerSourceRow = d.source_index != null ? String(d.source_index + 2) : "";
       } else {
@@ -113,7 +120,11 @@ export async function POST(request: NextRequest) {
                     ? "Rate Mismatch"
                     : d.type === "cost_mismatch"
                       ? "Cost Mismatch"
-                      : d.type;
+                      : d.type === "hung_call_yours"
+                        ? "Hung Call (Yours)"
+                        : d.type === "hung_call_provider"
+                          ? "Hung Call (Provider)"
+                          : d.type;
 
       return [
         typeLabel,
@@ -129,6 +140,7 @@ export async function POST(request: NextRequest) {
         d.your_cost?.toFixed(4) ?? "",
         d.provider_cost?.toFixed(4) ?? "",
         d.cost_difference?.toFixed(4) ?? "",
+        d.hung_call_count ?? "",
         yourSourceRow,
         providerSourceRow,
       ];
@@ -163,6 +175,8 @@ export async function POST(request: NextRequest) {
       ["LRN Mismatches", summary.lrnMismatches ?? 0],
       ["Zero Duration (Unanswered) - Yours", summary.zeroDurationInYours ?? 0],
       ["Zero Duration (Unanswered) - Provider", summary.zeroDurationInProvider ?? 0],
+      ["Hung Calls - Yours", `${summary.hungCallsInYours ?? 0} (${summary.hungCallGroupsYours ?? 0} groups)`],
+      ["Hung Calls - Provider", `${summary.hungCallsInProvider ?? 0} (${summary.hungCallGroupsProvider ?? 0} groups)`],
       ["Total Discrepancies", summary.totalDiscrepancies],
       [""],
       ["=== MONETARY IMPACT ==="],

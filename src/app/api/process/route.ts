@@ -607,7 +607,7 @@ export async function POST(request: NextRequest) {
     // Build discrepancies list
     // Types now include zero_duration variants to separate unanswered attempts from real billing issues
     interface Discrepancy {
-      type: "missing_in_a" | "missing_in_b" | "zero_duration_in_a" | "zero_duration_in_b" | "duration_mismatch" | "rate_mismatch" | "cost_mismatch" | "lrn_mismatch";
+      type: "missing_in_a" | "missing_in_b" | "zero_duration_in_a" | "zero_duration_in_b" | "duration_mismatch" | "rate_mismatch" | "cost_mismatch" | "lrn_mismatch" | "hung_call_yours" | "hung_call_provider";
       a_number: string;
       b_number: string;
       seize_time: number | null;
@@ -623,6 +623,7 @@ export async function POST(request: NextRequest) {
       source_index?: number;
       source_index_a?: number;
       source_index_b?: number;
+      hung_call_count?: number;
     }
     const discrepancies: Discrepancy[] = [];
 
@@ -743,11 +744,126 @@ export async function POST(request: NextRequest) {
           your_cost: yourCost,
           provider_cost: providerCost,
           cost_difference: costDiff,
+          your_lrn: match.lrn_a,
+          provider_lrn: match.lrn_b,
           source_index_a: match.index_a,
           source_index_b: match.index_b,
         });
       }
     }
+
+    // HUNG CALL DETECTION: Find calls with identical durations among UNMATCHED records only
+    // Hung calls occur when a switch fails to properly end a call, resulting in
+    // multiple calls with the exact same duration (minimum 3 calls, duration > 30 seconds)
+    // Only unmatched records are considered - if a call matched, it's legitimate
+    console.log("Detecting hung calls in unmatched records...");
+
+    interface HungCallRow {
+      duration: number;
+      call_count: number;
+    }
+
+    interface HungCallDetailRow {
+      a_number: string;
+      b_number: string;
+      seize_time: number | null;
+      rate: number;
+      raw_index: number;
+      billed_duration: number;
+    }
+
+    // Find durations with 3+ UNMATCHED calls in your records (File A)
+    const hungCallDurationsA = db.prepare(`
+      SELECT a.billed_duration as duration, COUNT(*) as call_count
+      FROM records_a a
+      LEFT JOIN matched_a_ids m ON a.id = m.id
+      WHERE m.id IS NULL AND a.billed_duration > 30
+      GROUP BY a.billed_duration
+      HAVING COUNT(*) >= 3
+      ORDER BY call_count DESC
+    `).all() as HungCallRow[];
+
+    // Find durations with 3+ UNMATCHED calls in provider records (File B)
+    const hungCallDurationsB = db.prepare(`
+      SELECT b.billed_duration as duration, COUNT(*) as call_count
+      FROM records_b b
+      LEFT JOIN matched_b_ids m ON b.id = m.id
+      WHERE m.id IS NULL AND b.billed_duration > 30
+      GROUP BY b.billed_duration
+      HAVING COUNT(*) >= 3
+      ORDER BY call_count DESC
+    `).all() as HungCallRow[];
+
+    let hungCallsInYours = 0;
+    let hungCallsInProvider = 0;
+    const hungCallGroupsYours = hungCallDurationsA.length;
+    const hungCallGroupsProvider = hungCallDurationsB.length;
+
+    // Add hung call discrepancies for your unmatched records
+    for (const group of hungCallDurationsA) {
+      const records = db.prepare(`
+        SELECT a.a_number, a.b_number, a.seize_time, a.rate, a.raw_index, a.billed_duration
+        FROM records_a a
+        LEFT JOIN matched_a_ids m ON a.id = m.id
+        WHERE m.id IS NULL AND a.billed_duration = ?
+        ORDER BY a.seize_time
+      `).all(group.duration) as HungCallDetailRow[];
+
+      hungCallsInYours += records.length;
+
+      for (const record of records) {
+        const cost = calculateCallCost(record.billed_duration, record.rate);
+        discrepancies.push({
+          type: "hung_call_yours",
+          a_number: record.a_number,
+          b_number: record.b_number,
+          seize_time: record.seize_time,
+          your_duration: record.billed_duration,
+          provider_duration: null,
+          your_rate: record.rate,
+          provider_rate: null,
+          your_cost: cost,
+          provider_cost: null,
+          cost_difference: cost,
+          source_index: record.raw_index,
+          hung_call_count: group.call_count,
+        });
+      }
+    }
+
+    // Add hung call discrepancies for provider unmatched records
+    for (const group of hungCallDurationsB) {
+      const records = db.prepare(`
+        SELECT b.a_number, b.b_number, b.seize_time, b.rate, b.raw_index, b.billed_duration
+        FROM records_b b
+        LEFT JOIN matched_b_ids m ON b.id = m.id
+        WHERE m.id IS NULL AND b.billed_duration = ?
+        ORDER BY b.seize_time
+      `).all(group.duration) as HungCallDetailRow[];
+
+      hungCallsInProvider += records.length;
+
+      for (const record of records) {
+        const cost = calculateCallCost(record.billed_duration, record.rate);
+        discrepancies.push({
+          type: "hung_call_provider",
+          a_number: record.a_number,
+          b_number: record.b_number,
+          seize_time: record.seize_time,
+          your_duration: null,
+          provider_duration: record.billed_duration,
+          your_rate: null,
+          provider_rate: record.rate,
+          your_cost: null,
+          provider_cost: cost,
+          cost_difference: -cost,
+          source_index: record.raw_index,
+          hung_call_count: group.call_count,
+        });
+      }
+    }
+
+    console.log(`Hung calls (unmatched only) - Yours: ${hungCallsInYours} (${hungCallGroupsYours} groups), Provider: ${hungCallsInProvider} (${hungCallGroupsProvider} groups)`);
 
     // MEMORY OPTIMIZATION: Calculate totals using SQL aggregation
     // Note: We use a SQL formula for 6-second increment billing: CEIL(duration/6) * rate / 10
@@ -839,6 +955,11 @@ export async function POST(request: NextRequest) {
         rateMismatches: Math.round(impactFromRate * 100) / 100,
         costMismatches: Math.round(impactFromCost * 100) / 100,
       },
+      // Hung calls (potential stuck switch issues)
+      hungCallsInYours,
+      hungCallsInProvider,
+      hungCallGroupsYours,
+      hungCallGroupsProvider,
     };
 
     console.log("Summary:", summary);
@@ -898,6 +1019,8 @@ export async function POST(request: NextRequest) {
       missing_in_b: 6,
       zero_duration_in_a: 7,
       zero_duration_in_b: 8,
+      hung_call_yours: 9,
+      hung_call_provider: 10,
     };
 
     sampledDiscrepancies.sort((a, b) => {
