@@ -4,9 +4,8 @@ const nextConfig = {
     serverActions: {
       bodySizeLimit: '500mb',
     },
+    proxyClientMaxBodySize: '500mb',
   },
-  // Body size limit for middleware/route handlers (Next.js 16+)
-  middlewareClientMaxBodySize: '500mb',
   // Security headers
   async headers() {
     return [
