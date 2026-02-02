@@ -271,8 +271,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Security: Validate file sizes (max 250MB each)
-    const MAX_FILE_SIZE = 250 * 1024 * 1024; // 250MB
+    // Security: Validate file sizes (max 500MB each)
+    const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB
     if (fileA.size > MAX_FILE_SIZE || fileB.size > MAX_FILE_SIZE) {
       return NextResponse.json(
         { error: `File size exceeds maximum allowed (${MAX_FILE_SIZE / 1024 / 1024}MB)` },
