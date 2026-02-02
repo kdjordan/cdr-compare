@@ -2,10 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import Database from "better-sqlite3";
 import { v4 as uuidv4 } from "uuid";
 import { unlink, writeFile, readFile } from "fs/promises";
+import { createWriteStream } from "fs";
+import { Readable } from "stream";
 import path from "path";
 import Papa from "papaparse";
 import readXlsxFile from "read-excel-file/node";
 import JSZip from "jszip";
+import busboy from "busboy";
 
 // Types
 interface ColumnMapping {
@@ -233,6 +236,93 @@ async function parseFile(filePath: string, fileName: string): Promise<Record<str
   throw new Error(`Unsupported file type: ${ext}`);
 }
 
+// Stream-parse a multipart/form-data request using busboy.
+// Streams files directly to disk instead of buffering in memory,
+// bypassing request.formData() which has undocumented size limits in Next.js App Router.
+interface ParsedUpload {
+  files: Map<string, { filename: string; size: number }>;
+  fields: Map<string, string>;
+}
+
+function parseMultipartRequest(
+  request: NextRequest,
+  fileDestinations: Record<string, string>,
+  maxFileSize: number
+): Promise<ParsedUpload> {
+  return new Promise((resolve, reject) => {
+    const contentType = request.headers.get("content-type");
+    if (!contentType) {
+      return reject(new Error("Missing Content-Type header"));
+    }
+
+    const bb = busboy({
+      headers: { "content-type": contentType },
+      limits: { fileSize: maxFileSize },
+    });
+
+    const files = new Map<string, { filename: string; size: number }>();
+    const fields = new Map<string, string>();
+    let fileSizeLimitHit = false;
+    let limitFieldname = "";
+
+    bb.on("file", (fieldname, stream, info) => {
+      const destPath = fileDestinations[fieldname];
+      if (!destPath) {
+        stream.resume(); // Drain unknown file fields
+        return;
+      }
+
+      let byteCount = 0;
+      const writeStream = createWriteStream(destPath);
+
+      stream.on("data", (chunk: Buffer) => {
+        byteCount += chunk.length;
+      });
+
+      stream.on("limit", () => {
+        fileSizeLimitHit = true;
+        limitFieldname = fieldname;
+        writeStream.destroy();
+      });
+
+      stream.pipe(writeStream);
+
+      writeStream.on("close", () => {
+        if (!fileSizeLimitHit) {
+          files.set(fieldname, { filename: info.filename, size: byteCount });
+        }
+      });
+    });
+
+    bb.on("field", (fieldname, value) => {
+      fields.set(fieldname, value);
+    });
+
+    bb.on("close", () => {
+      if (fileSizeLimitHit) {
+        return reject(
+          new Error(`File "${limitFieldname}" exceeds maximum allowed size (${maxFileSize / 1024 / 1024}MB)`)
+        );
+      }
+      resolve({ files, fields });
+    });
+
+    bb.on("error", (err) => {
+      reject(err);
+    });
+
+    // Convert Web ReadableStream to Node.js Readable and pipe to busboy
+    const body = request.body;
+    if (!body) {
+      return reject(new Error("Request body is empty"));
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const nodeStream = Readable.fromWeb(body as any);
+    nodeStream.pipe(bb);
+  });
+}
+
 export async function POST(request: NextRequest) {
   const jobId = uuidv4();
   const dbPath = path.join("/tmp", `job-${jobId}.db`);
@@ -256,34 +346,30 @@ export async function POST(request: NextRequest) {
   };
 
   try {
-    // Parse FormData
-    const formData = await request.formData();
+    // Stream-parse the multipart request, writing files directly to disk
+    const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
+    const { files, fields } = await parseMultipartRequest(
+      request,
+      { fileA: fileAPath, fileB: fileBPath },
+      MAX_FILE_SIZE
+    );
 
-    const fileA = formData.get("fileA") as File | null;
-    const fileB = formData.get("fileB") as File | null;
-    const mappingAStr = formData.get("mappingA") as string | null;
-    const mappingBStr = formData.get("mappingB") as string | null;
+    const fileAInfo = files.get("fileA");
+    const fileBInfo = files.get("fileB");
+    const mappingAStr = fields.get("mappingA") || null;
+    const mappingBStr = fields.get("mappingB") || null;
 
-    if (!fileA || !fileB || !mappingAStr || !mappingBStr) {
+    if (!fileAInfo || !fileBInfo || !mappingAStr || !mappingBStr) {
       return NextResponse.json(
         { error: "Missing required fields: fileA, fileB, mappingA, mappingB" },
         { status: 400 }
       );
     }
 
-    // Security: Validate file sizes (max 100MB each)
-    const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
-    if (fileA.size > MAX_FILE_SIZE || fileB.size > MAX_FILE_SIZE) {
-      return NextResponse.json(
-        { error: `File size exceeds maximum allowed (${MAX_FILE_SIZE / 1024 / 1024}MB)` },
-        { status: 413 }
-      );
-    }
-
     // Security: Validate file extensions
     const allowedExtensions = [".csv", ".xlsx", ".xls", ".zip"];
-    const extA = path.extname(fileA.name).toLowerCase();
-    const extB = path.extname(fileB.name).toLowerCase();
+    const extA = path.extname(fileAInfo.filename).toLowerCase();
+    const extB = path.extname(fileBInfo.filename).toLowerCase();
     if (!allowedExtensions.includes(extA) || !allowedExtensions.includes(extB)) {
       return NextResponse.json(
         { error: "Invalid file type. Allowed: CSV, XLSX, XLS, ZIP" },
@@ -338,19 +424,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Save files to disk
-    const bufferA = Buffer.from(await fileA.arrayBuffer());
-    const bufferB = Buffer.from(await fileB.arrayBuffer());
-    await writeFile(fileAPath, bufferA);
-    await writeFile(fileBPath, bufferB);
-
+    // Files are already streamed to disk by parseMultipartRequest
     // Parse files
-    console.log(`Parsing file A: ${fileA.name}`);
-    const dataA = await parseFile(fileAPath, fileA.name);
+    console.log(`Parsing file A: ${fileAInfo.filename} (${(fileAInfo.size / 1024 / 1024).toFixed(1)}MB)`);
+    const dataA = await parseFile(fileAPath, fileAInfo.filename);
     console.log(`Parsed ${dataA.length} rows from file A`);
 
-    console.log(`Parsing file B: ${fileB.name}`);
-    const dataB = await parseFile(fileBPath, fileB.name);
+    console.log(`Parsing file B: ${fileBInfo.filename} (${(fileBInfo.size / 1024 / 1024).toFixed(1)}MB)`);
+    const dataB = await parseFile(fileBPath, fileBInfo.filename);
     console.log(`Parsed ${dataB.length} rows from file B`);
 
     if (!dataA.length || !dataB.length) {
