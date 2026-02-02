@@ -2,12 +2,11 @@
 const nextConfig = {
   experimental: {
     serverActions: {
-      // Reduced from 500mb - 100mb per file, 200mb total is plenty
-      bodySizeLimit: '250mb',
+      bodySizeLimit: '500mb',
     },
-    // Allow large file uploads through proxy (100MB per file, 200MB total)
-    proxyClientMaxBodySize: '250mb',
   },
+  // Body size limit for middleware/route handlers (Next.js 16+)
+  middlewareClientMaxBodySize: '500mb',
   // Security headers
   async headers() {
     return [
