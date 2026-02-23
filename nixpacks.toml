@@ -1,0 +1,8 @@
+[phases.setup]
+nixPkgs = ["python3", "python3Packages.xlsx2csv"]
+
+[phases.install]
+cmds = ["npm ci"]
+
+[start]
+cmd = "npm run start"

@@ -4,8 +4,11 @@ import { v4 as uuidv4 } from "uuid";
 import { unlink, writeFile, readFile } from "fs/promises";
 import path from "path";
 import Papa from "papaparse";
-import readXlsxFile from "read-excel-file/node";
 import JSZip from "jszip";
+import { exec } from "child_process";
+import { promisify } from "util";
+
+const execAsync = promisify(exec);
 
 // Types
 interface ColumnMapping {
@@ -120,44 +123,54 @@ function calculateCallCost(durationSeconds: number, ratePerMinute: number): numb
   return increments * costPerIncrement;
 }
 
+// Convert XLSX to CSV using xlsx2csv (Python-based, memory efficient)
+async function convertXlsxToCsv(xlsxPath: string, csvPath: string): Promise<void> {
+  try {
+    // xlsx2csv converts Excel files to CSV efficiently without loading entire file into memory
+    await execAsync(`xlsx2csv "${xlsxPath}" "${csvPath}"`, {
+      timeout: 300000, // 5 minute timeout for large files
+      maxBuffer: 10 * 1024 * 1024, // 10MB buffer for stderr/stdout
+    });
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to convert XLSX to CSV: ${errMsg}`);
+  }
+}
+
+// Parse CSV file (memory efficient with PapaParse)
+async function parseCsvFile(filePath: string): Promise<Record<string, unknown>[]> {
+  const buffer = await readFile(filePath);
+  const text = buffer.toString("utf-8");
+  const result = Papa.parse(text, {
+    header: true,
+    skipEmptyLines: true,
+    dynamicTyping: true,
+  });
+  return result.data as Record<string, unknown>[];
+}
+
 // Parse file based on extension
 async function parseFile(filePath: string, fileName: string): Promise<Record<string, unknown>[]> {
   const ext = path.extname(fileName).toLowerCase();
 
   if (ext === ".csv") {
-    const buffer = await readFile(filePath);
-    const text = buffer.toString("utf-8");
-    const result = Papa.parse(text, {
-      header: true,
-      skipEmptyLines: true,
-      dynamicTyping: true,
-    });
-    return result.data as Record<string, unknown>[];
+    return parseCsvFile(filePath);
   }
 
   if (ext === ".xlsx" || ext === ".xls") {
-    // read-excel-file returns rows as arrays, first row is headers
-    const rows = await readXlsxFile(filePath);
+    // Convert XLSX to CSV first (much more memory efficient)
+    const csvPath = filePath + ".converted.csv";
+    console.log(`Converting XLSX to CSV: ${fileName}`);
 
-    if (rows.length === 0) {
-      return [];
+    try {
+      await convertXlsxToCsv(filePath, csvPath);
+      console.log(`Conversion complete, parsing CSV...`);
+      const data = await parseCsvFile(csvPath);
+      return data;
+    } finally {
+      // Clean up converted CSV
+      await unlink(csvPath).catch(() => {});
     }
-
-    // First row is headers
-    const headers = rows[0].map((cell) => String(cell ?? ""));
-
-    // Convert remaining rows to objects
-    const data: Record<string, unknown>[] = [];
-    for (let i = 1; i < rows.length; i++) {
-      const row = rows[i];
-      const record: Record<string, unknown> = {};
-      headers.forEach((header, index) => {
-        record[header] = row[index] ?? null;
-      });
-      data.push(record);
-    }
-
-    return data;
   }
 
   if (ext === ".zip") {
@@ -203,29 +216,22 @@ async function parseFile(filePath: string, fileName: string): Promise<Record<str
     }
 
     if (entryExt === ".xlsx" || entryExt === ".xls") {
-      // Extract to temp file for read-excel-file
+      // Extract XLSX to temp file, then convert to CSV
       const xlsxBuffer = await entry.async("nodebuffer");
       const tempXlsxPath = filePath + ".extracted.xlsx";
+      const tempCsvPath = filePath + ".extracted.csv";
       await writeFile(tempXlsxPath, xlsxBuffer);
 
       try {
-        const rows = await readXlsxFile(tempXlsxPath);
-        if (rows.length === 0) {
-          return [];
-        }
-        const headers = rows[0].map((cell) => String(cell ?? ""));
-        const data: Record<string, unknown>[] = [];
-        for (let i = 1; i < rows.length; i++) {
-          const row = rows[i];
-          const record: Record<string, unknown> = {};
-          headers.forEach((header, index) => {
-            record[header] = row[index] ?? null;
-          });
-          data.push(record);
-        }
+        console.log(`Converting extracted XLSX to CSV: ${entryName}`);
+        await convertXlsxToCsv(tempXlsxPath, tempCsvPath);
+        console.log(`Conversion complete, parsing CSV...`);
+        const data = await parseCsvFile(tempCsvPath);
         return data;
       } finally {
+        // Clean up temp files
         await unlink(tempXlsxPath).catch(() => {});
+        await unlink(tempCsvPath).catch(() => {});
       }
     }
   }
