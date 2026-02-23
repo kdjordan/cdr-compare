@@ -43,7 +43,7 @@ const nextConfig = {
       '@aws-sdk/client-s3': { browser: '' },
     },
   },
-  serverExternalPackages: ['better-sqlite3'],
+  serverExternalPackages: ['better-sqlite3', 'read-excel-file'],
   webpack: (config, { isServer }) => {
     // Handle native modules and optional dependencies
     if (isServer) {
