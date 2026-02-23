@@ -604,8 +604,10 @@ export async function POST(request: NextRequest) {
       WHERE m.id IS NULL
     `);
 
-    // Build discrepancies list
-    // Types now include zero_duration variants to separate unanswered attempts from real billing issues
+    // Build discrepancies list with MEMORY OPTIMIZATION
+    // Instead of storing all discrepancies, we:
+    // 1. Track counts and totals for summary
+    // 2. Only keep top N items per category (by cost impact)
     interface Discrepancy {
       type: "missing_in_a" | "missing_in_b" | "zero_duration_in_a" | "zero_duration_in_b" | "duration_mismatch" | "rate_mismatch" | "cost_mismatch" | "lrn_mismatch" | "hung_call_yours" | "hung_call_provider";
       a_number: string;
@@ -625,13 +627,98 @@ export async function POST(request: NextRequest) {
       source_index_b?: number;
       hung_call_count?: number;
     }
-    const discrepancies: Discrepancy[] = [];
+
+    // MEMORY OPTIMIZATION: Bounded collector keeps only top N items per category
+    const MAX_PER_CATEGORY = 1000; // Keep top 1000 per category by |cost_difference|
+    type DiscrepancyType = Discrepancy["type"];
+
+    class BoundedDiscrepancyCollector {
+      private items: Map<DiscrepancyType, Discrepancy[]> = new Map();
+      private counts: Map<DiscrepancyType, number> = new Map();
+      private costTotals: Map<DiscrepancyType, number> = new Map();
+      private maxPerCategory: number;
+
+      constructor(maxPerCategory: number) {
+        this.maxPerCategory = maxPerCategory;
+      }
+
+      add(d: Discrepancy) {
+        const type = d.type;
+        // Update count
+        this.counts.set(type, (this.counts.get(type) || 0) + 1);
+        // Update cost total
+        this.costTotals.set(type, (this.costTotals.get(type) || 0) + d.cost_difference);
+
+        // Get or create array for this type
+        let arr = this.items.get(type);
+        if (!arr) {
+          arr = [];
+          this.items.set(type, arr);
+        }
+
+        // If under limit, just add
+        if (arr.length < this.maxPerCategory) {
+          arr.push(d);
+          return;
+        }
+
+        // Otherwise, check if this item has higher |cost_difference| than the min
+        const absCost = Math.abs(d.cost_difference);
+        let minIdx = 0;
+        let minAbsCost = Math.abs(arr[0].cost_difference);
+        for (let i = 1; i < arr.length; i++) {
+          const c = Math.abs(arr[i].cost_difference);
+          if (c < minAbsCost) {
+            minAbsCost = c;
+            minIdx = i;
+          }
+        }
+
+        if (absCost > minAbsCost) {
+          arr[minIdx] = d; // Replace the minimum
+        }
+      }
+
+      getCount(type: DiscrepancyType): number {
+        return this.counts.get(type) || 0;
+      }
+
+      getCostTotal(type: DiscrepancyType): number {
+        return this.costTotals.get(type) || 0;
+      }
+
+      getTotalCount(): number {
+        let total = 0;
+        for (const count of this.counts.values()) total += count;
+        return total;
+      }
+
+      getTotalCost(): number {
+        let total = 0;
+        for (const cost of this.costTotals.values()) total += cost;
+        return total;
+      }
+
+      getAllItems(): Discrepancy[] {
+        const result: Discrepancy[] = [];
+        for (const arr of this.items.values()) {
+          result.push(...arr);
+        }
+        return result;
+      }
+
+      getItemsByType(type: DiscrepancyType): Discrepancy[] {
+        return this.items.get(type) || [];
+      }
+    }
+
+    const collector = new BoundedDiscrepancyCollector(MAX_PER_CATEGORY);
 
     // Track zero-duration stats for synopsis
-    let zeroDurationInA = 0; // Your records with 0 duration not in provider
-    let zeroDurationInB = 0; // Provider records with 0 duration not in yours
-    let billedMissingInA = 0; // Provider has billed calls you don't have (real issue)
-    let billedMissingInB = 0; // You have billed calls provider doesn't have (real issue)
+    let zeroDurationInA = 0;
+    let zeroDurationInB = 0;
+    let billedMissingInA = 0;
+    let billedMissingInB = 0;
 
     // MEMORY OPTIMIZATION: Use iteration for unmatched records
     // Missing in B (You have it, provider doesn't)
@@ -645,7 +732,7 @@ export async function POST(request: NextRequest) {
         billedMissingInB++;
       }
 
-      discrepancies.push({
+      collector.add({
         type: isZeroDuration ? "zero_duration_in_b" : "missing_in_b",
         a_number: record.a_number,
         b_number: record.b_number,
@@ -656,7 +743,7 @@ export async function POST(request: NextRequest) {
         provider_rate: null,
         your_cost: yourCost,
         provider_cost: null,
-        cost_difference: yourCost, // You're paying for a call they don't have
+        cost_difference: yourCost,
         source_index: record.raw_index,
       });
     }
@@ -672,7 +759,7 @@ export async function POST(request: NextRequest) {
         billedMissingInA++;
       }
 
-      discrepancies.push({
+      collector.add({
         type: isZeroDuration ? "zero_duration_in_a" : "missing_in_a",
         a_number: record.a_number,
         b_number: record.b_number,
@@ -683,7 +770,7 @@ export async function POST(request: NextRequest) {
         provider_rate: record.rate,
         your_cost: null,
         provider_cost: providerCost,
-        cost_difference: -providerCost, // They're billing you for a call you don't have
+        cost_difference: -providerCost,
         source_index: record.raw_index,
       });
     }
@@ -695,11 +782,11 @@ export async function POST(request: NextRequest) {
       const providerCost = calculateCallCost(match.duration_b, match.rate_b);
       const costDiff = yourCost - providerCost;
 
-      // Check for LRN mismatch - different LRN dips could mean different billing rates
+      // Check for LRN mismatch
       const lrnMismatch = match.lrn_a !== match.lrn_b && match.lrn_a && match.lrn_b;
       if (lrnMismatch) {
         lrnMismatchCount++;
-        discrepancies.push({
+        collector.add({
           type: "lrn_mismatch",
           a_number: match.a_number,
           b_number: match.b_number,
@@ -718,10 +805,8 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      // Only report cost difference if there's a meaningful cost difference (> $0.0001)
-      // AND it's not already reported as LRN mismatch
+      // Only report cost difference if meaningful and not already LRN mismatch
       if (Math.abs(costDiff) > 0.0001 && !lrnMismatch) {
-        // Determine the primary cause of the discrepancy
         const durationDiff = match.duration_a - match.duration_b;
         const rateDiff = match.rate_a - match.rate_b;
 
@@ -732,7 +817,7 @@ export async function POST(request: NextRequest) {
           discrepancyType = "rate_mismatch";
         }
 
-        discrepancies.push({
+        collector.add({
           type: discrepancyType,
           a_number: match.a_number,
           b_number: match.b_number,
@@ -752,10 +837,10 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // HUNG CALL DETECTION: Find calls with identical durations among UNMATCHED records only
-    // Hung calls occur when a switch fails to properly end a call, resulting in
-    // multiple calls with the exact same duration (minimum 3 calls, duration > 30 seconds)
-    // Only unmatched records are considered - if a call matched, it's legitimate
+    // Clear matches array to free memory - we don't need it anymore
+    matches.length = 0;
+
+    // HUNG CALL DETECTION with bounded collection
     console.log("Detecting hung calls in unmatched records...");
 
     interface HungCallRow {
@@ -763,104 +848,113 @@ export async function POST(request: NextRequest) {
       call_count: number;
     }
 
-    interface HungCallDetailRow {
-      a_number: string;
-      b_number: string;
-      seize_time: number | null;
-      rate: number;
-      raw_index: number;
-      billed_duration: number;
-    }
-
-    // Find durations with 3+ UNMATCHED calls in your records (File A)
-    const hungCallDurationsA = db.prepare(`
-      SELECT a.billed_duration as duration, COUNT(*) as call_count
+    // Get hung call counts from SQL (memory efficient)
+    const hungCallStatsA = db.prepare(`
+      SELECT COUNT(*) as total_calls, COUNT(DISTINCT billed_duration) as groups
       FROM records_a a
       LEFT JOIN matched_a_ids m ON a.id = m.id
       WHERE m.id IS NULL AND a.billed_duration > 30
-      GROUP BY a.billed_duration
-      HAVING COUNT(*) >= 3
-      ORDER BY call_count DESC
-    `).all() as HungCallRow[];
+      AND a.billed_duration IN (
+        SELECT billed_duration FROM records_a a2
+        LEFT JOIN matched_a_ids m2 ON a2.id = m2.id
+        WHERE m2.id IS NULL AND a2.billed_duration > 30
+        GROUP BY a2.billed_duration HAVING COUNT(*) >= 3
+      )
+    `).get() as { total_calls: number; groups: number };
 
-    // Find durations with 3+ UNMATCHED calls in provider records (File B)
-    const hungCallDurationsB = db.prepare(`
-      SELECT b.billed_duration as duration, COUNT(*) as call_count
+    const hungCallStatsB = db.prepare(`
+      SELECT COUNT(*) as total_calls, COUNT(DISTINCT billed_duration) as groups
       FROM records_b b
       LEFT JOIN matched_b_ids m ON b.id = m.id
       WHERE m.id IS NULL AND b.billed_duration > 30
-      GROUP BY b.billed_duration
-      HAVING COUNT(*) >= 3
-      ORDER BY call_count DESC
-    `).all() as HungCallRow[];
+      AND b.billed_duration IN (
+        SELECT billed_duration FROM records_b b2
+        LEFT JOIN matched_b_ids m2 ON b2.id = m2.id
+        WHERE m2.id IS NULL AND b2.billed_duration > 30
+        GROUP BY b2.billed_duration HAVING COUNT(*) >= 3
+      )
+    `).get() as { total_calls: number; groups: number };
 
-    let hungCallsInYours = 0;
-    let hungCallsInProvider = 0;
-    const hungCallGroupsYours = hungCallDurationsA.length;
-    const hungCallGroupsProvider = hungCallDurationsB.length;
+    const hungCallsInYours = hungCallStatsA?.total_calls || 0;
+    const hungCallsInProvider = hungCallStatsB?.total_calls || 0;
+    const hungCallGroupsYours = hungCallStatsA?.groups || 0;
+    const hungCallGroupsProvider = hungCallStatsB?.groups || 0;
 
-    // Add hung call discrepancies for your unmatched records
-    for (const group of hungCallDurationsA) {
-      const records = db.prepare(`
-        SELECT a.a_number, a.b_number, a.seize_time, a.rate, a.raw_index, a.billed_duration
-        FROM records_a a
-        LEFT JOIN matched_a_ids m ON a.id = m.id
-        WHERE m.id IS NULL AND a.billed_duration = ?
-        ORDER BY a.seize_time
-      `).all(group.duration) as HungCallDetailRow[];
+    // Only fetch top hung calls for display (limit to avoid memory issues)
+    const HUNG_CALL_SAMPLE_LIMIT = 200;
 
-      hungCallsInYours += records.length;
+    const hungCallSampleA = db.prepare(`
+      SELECT a.a_number, a.b_number, a.seize_time, a.rate, a.raw_index, a.billed_duration,
+             (SELECT COUNT(*) FROM records_a a2
+              LEFT JOIN matched_a_ids m2 ON a2.id = m2.id
+              WHERE m2.id IS NULL AND a2.billed_duration = a.billed_duration) as call_count
+      FROM records_a a
+      LEFT JOIN matched_a_ids m ON a.id = m.id
+      WHERE m.id IS NULL AND a.billed_duration > 30
+      AND a.billed_duration IN (
+        SELECT billed_duration FROM records_a a2
+        LEFT JOIN matched_a_ids m2 ON a2.id = m2.id
+        WHERE m2.id IS NULL AND a2.billed_duration > 30
+        GROUP BY a2.billed_duration HAVING COUNT(*) >= 3
+      )
+      ORDER BY a.rate * a.billed_duration DESC
+      LIMIT ?
+    `).all(HUNG_CALL_SAMPLE_LIMIT) as (RecordRow & { call_count: number })[];
 
-      for (const record of records) {
-        const cost = calculateCallCost(record.billed_duration, record.rate);
-        discrepancies.push({
-          type: "hung_call_yours",
-          a_number: record.a_number,
-          b_number: record.b_number,
-          seize_time: record.seize_time,
-          your_duration: record.billed_duration,
-          provider_duration: null,
-          your_rate: record.rate,
-          provider_rate: null,
-          your_cost: cost,
-          provider_cost: null,
-          cost_difference: cost,
-          source_index: record.raw_index,
-          hung_call_count: group.call_count,
-        });
-      }
+    for (const record of hungCallSampleA) {
+      const cost = calculateCallCost(record.billed_duration, record.rate);
+      collector.add({
+        type: "hung_call_yours",
+        a_number: record.a_number,
+        b_number: record.b_number,
+        seize_time: record.seize_time,
+        your_duration: record.billed_duration,
+        provider_duration: null,
+        your_rate: record.rate,
+        provider_rate: null,
+        your_cost: cost,
+        provider_cost: null,
+        cost_difference: cost,
+        source_index: record.raw_index,
+        hung_call_count: record.call_count,
+      });
     }
 
-    // Add hung call discrepancies for provider unmatched records
-    for (const group of hungCallDurationsB) {
-      const records = db.prepare(`
-        SELECT b.a_number, b.b_number, b.seize_time, b.rate, b.raw_index, b.billed_duration
-        FROM records_b b
-        LEFT JOIN matched_b_ids m ON b.id = m.id
-        WHERE m.id IS NULL AND b.billed_duration = ?
-        ORDER BY b.seize_time
-      `).all(group.duration) as HungCallDetailRow[];
+    const hungCallSampleB = db.prepare(`
+      SELECT b.a_number, b.b_number, b.seize_time, b.rate, b.raw_index, b.billed_duration,
+             (SELECT COUNT(*) FROM records_b b2
+              LEFT JOIN matched_b_ids m2 ON b2.id = m2.id
+              WHERE m2.id IS NULL AND b2.billed_duration = b.billed_duration) as call_count
+      FROM records_b b
+      LEFT JOIN matched_b_ids m ON b.id = m.id
+      WHERE m.id IS NULL AND b.billed_duration > 30
+      AND b.billed_duration IN (
+        SELECT billed_duration FROM records_b b2
+        LEFT JOIN matched_b_ids m2 ON b2.id = m2.id
+        WHERE m2.id IS NULL AND b2.billed_duration > 30
+        GROUP BY b2.billed_duration HAVING COUNT(*) >= 3
+      )
+      ORDER BY b.rate * b.billed_duration DESC
+      LIMIT ?
+    `).all(HUNG_CALL_SAMPLE_LIMIT) as (RecordRow & { call_count: number })[];
 
-      hungCallsInProvider += records.length;
-
-      for (const record of records) {
-        const cost = calculateCallCost(record.billed_duration, record.rate);
-        discrepancies.push({
-          type: "hung_call_provider",
-          a_number: record.a_number,
-          b_number: record.b_number,
-          seize_time: record.seize_time,
-          your_duration: null,
-          provider_duration: record.billed_duration,
-          your_rate: null,
-          provider_rate: record.rate,
-          your_cost: null,
-          provider_cost: cost,
-          cost_difference: -cost,
-          source_index: record.raw_index,
-          hung_call_count: group.call_count,
-        });
-      }
+    for (const record of hungCallSampleB) {
+      const cost = calculateCallCost(record.billed_duration, record.rate);
+      collector.add({
+        type: "hung_call_provider",
+        a_number: record.a_number,
+        b_number: record.b_number,
+        seize_time: record.seize_time,
+        your_duration: null,
+        provider_duration: record.billed_duration,
+        your_rate: null,
+        provider_rate: record.rate,
+        your_cost: null,
+        provider_cost: cost,
+        cost_difference: -cost,
+        source_index: record.raw_index,
+        hung_call_count: record.call_count,
+      });
     }
 
     console.log(`Hung calls (unmatched only) - Yours: ${hungCallsInYours} (${hungCallGroupsYours} groups), Provider: ${hungCallsInProvider} (${hungCallGroupsProvider} groups)`);
@@ -905,25 +999,27 @@ export async function POST(request: NextRequest) {
     const yourTotalMinutes = Math.round((yourTotalSeconds / 60) * 100) / 100;
     const providerTotalMinutes = Math.round((providerTotalSeconds / 60) * 100) / 100;
 
-    // Calculate cost breakdowns for synopsis
-    const missingInAWithCost = discrepancies.filter(d => d.type === "missing_in_a");
-    const missingInBWithCost = discrepancies.filter(d => d.type === "missing_in_b");
-    const durationMismatches = discrepancies.filter(d => d.type === "duration_mismatch");
-    const rateMismatches = discrepancies.filter(d => d.type === "rate_mismatch");
-    const costMismatches = discrepancies.filter(d => d.type === "cost_mismatch");
+    // MEMORY OPTIMIZATION: Get counts and totals from collector (no array filtering)
+    const durationMismatchCount = collector.getCount("duration_mismatch");
+    const rateMismatchCount = collector.getCount("rate_mismatch");
+    const costMismatchCount = collector.getCount("cost_mismatch");
+    const totalDiscrepancyCount = collector.getTotalCount();
 
-    // Calculate monetary impact by category
-    const impactFromMissingInA = missingInAWithCost.reduce((sum, d) => sum + (d.cost_difference || 0), 0);
-    const impactFromMissingInB = missingInBWithCost.reduce((sum, d) => sum + (d.cost_difference || 0), 0);
-    const impactFromDuration = durationMismatches.reduce((sum, d) => sum + (d.cost_difference || 0), 0);
-    const impactFromRate = rateMismatches.reduce((sum, d) => sum + (d.cost_difference || 0), 0);
-    const impactFromCost = costMismatches.reduce((sum, d) => sum + (d.cost_difference || 0), 0);
+    // Get monetary impact by category from collector
+    const impactFromMissingInA = collector.getCostTotal("missing_in_a");
+    const impactFromMissingInB = collector.getCostTotal("missing_in_b");
+    const impactFromDuration = collector.getCostTotal("duration_mismatch");
+    const impactFromRate = collector.getCostTotal("rate_mismatch");
+    const impactFromCost = collector.getCostTotal("cost_mismatch");
+
+    // Store matched count before we cleared the array
+    const matchedRecordsCount = usedAIds.size;
 
     // Calculate summary
     const summary = {
       totalRecordsA: dataA.length,
       totalRecordsB: dataB.length,
-      matchedRecords: matches.length,
+      matchedRecords: matchedRecordsCount,
       // TOTAL BILLED - key numbers for invoice comparison
       yourTotalBilled: Math.round(yourTotalBilled * 100) / 100,
       providerTotalBilled: Math.round(providerTotalBilled * 100) / 100,
@@ -936,21 +1032,21 @@ export async function POST(request: NextRequest) {
       missingInYours: unmatchedCountB,
       missingInProvider: unmatchedCountA,
       // New: separated by billing relevance
-      zeroDurationInYours: zeroDurationInA, // Your 0-sec calls not in provider (likely attempts)
-      zeroDurationInProvider: zeroDurationInB, // Provider 0-sec calls not in yours (likely attempts)
-      billedMissingInYours: billedMissingInA, // Provider has billed calls you don't - REAL ISSUE
-      billedMissingInProvider: billedMissingInB, // You have billed calls they don't - REAL ISSUE
+      zeroDurationInYours: zeroDurationInA,
+      zeroDurationInProvider: zeroDurationInB,
+      billedMissingInYours: billedMissingInA,
+      billedMissingInProvider: billedMissingInB,
       // Mismatch counts
-      durationMismatches: durationMismatches.length,
-      rateMismatches: rateMismatches.length,
-      costMismatches: costMismatches.length,
+      durationMismatches: durationMismatchCount,
+      rateMismatches: rateMismatchCount,
+      costMismatches: costMismatchCount,
       lrnMismatches: lrnMismatchCount,
-      totalDiscrepancies: discrepancies.length,
-      // Monetary impact breakdown (from discrepancies analysis)
-      monetaryImpact: Math.round(discrepancies.reduce((sum, d) => sum + (d.cost_difference || 0), 0) * 100) / 100,
+      totalDiscrepancies: totalDiscrepancyCount,
+      // Monetary impact breakdown
+      monetaryImpact: Math.round(collector.getTotalCost() * 100) / 100,
       impactBreakdown: {
-        missingInYours: Math.round(impactFromMissingInA * 100) / 100, // Negative = provider billing you
-        missingInProvider: Math.round(impactFromMissingInB * 100) / 100, // Positive = you have extra
+        missingInYours: Math.round(impactFromMissingInA * 100) / 100,
+        missingInProvider: Math.round(impactFromMissingInB * 100) / 100,
         durationMismatches: Math.round(impactFromDuration * 100) / 100,
         rateMismatches: Math.round(impactFromRate * 100) / 100,
         costMismatches: Math.round(impactFromCost * 100) / 100,
@@ -964,50 +1060,12 @@ export async function POST(request: NextRequest) {
 
     console.log("Summary:", summary);
 
-    // Cleanup
+    // Cleanup database
     await cleanup();
 
-    // Group discrepancies by type and take a sample from each category
-    // This ensures all categories are represented in the UI
-    const MAX_TOTAL = 5000;
-    const byType: Record<string, Discrepancy[]> = {};
-
-    for (const d of discrepancies) {
-      if (!byType[d.type]) byType[d.type] = [];
-      byType[d.type].push(d);
-    }
-
-    // Sort each category by absolute cost difference (biggest impact first)
-    for (const type in byType) {
-      byType[type].sort((a, b) => Math.abs(b.cost_difference) - Math.abs(a.cost_difference));
-    }
-
-    // Calculate how many to take from each category proportionally
-    // But ensure we take at least some from each non-empty category
-    const types = Object.keys(byType);
-    const totalCount = discrepancies.length;
-    const sampledDiscrepancies: Discrepancy[] = [];
-
-    if (totalCount <= MAX_TOTAL) {
-      // Return all if under limit
-      sampledDiscrepancies.push(...discrepancies);
-    } else {
-      // Take proportional sample, minimum 100 per category (or all if less than 100)
-      const minPerCategory = 100;
-      const reservedSlots = types.length * minPerCategory;
-      const remainingSlots = MAX_TOTAL - Math.min(reservedSlots, MAX_TOTAL * 0.5);
-
-      for (const type of types) {
-        const categoryItems = byType[type];
-        const proportion = categoryItems.length / totalCount;
-        const proportionalCount = Math.floor(remainingSlots * proportion);
-        const takeCount = Math.min(
-          categoryItems.length,
-          Math.max(minPerCategory, proportionalCount)
-        );
-        sampledDiscrepancies.push(...categoryItems.slice(0, takeCount));
-      }
-    }
+    // MEMORY OPTIMIZATION: Get sampled discrepancies directly from collector
+    // The collector already keeps only top N per category, sorted by |cost_difference|
+    const sampledDiscrepancies = collector.getAllItems();
 
     // Sort final result by type then cost for consistent display
     const typeOrder: Record<string, number> = {
@@ -1036,8 +1094,8 @@ export async function POST(request: NextRequest) {
       jobId,
       summary,
       discrepancies: sampledDiscrepancies,
-      hasMore: discrepancies.length > sampledDiscrepancies.length,
-      totalDiscrepancyCount: discrepancies.length,
+      hasMore: totalDiscrepancyCount > sampledDiscrepancies.length,
+      totalDiscrepancyCount: totalDiscrepancyCount,
     });
   } catch (error) {
     console.error("Processing error:", error);
