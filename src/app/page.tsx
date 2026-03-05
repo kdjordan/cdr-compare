@@ -170,7 +170,7 @@ export default function Home() {
                 <Database className="w-4 h-4 text-accent" />
               </div>
               <span className="font-display font-semibold tracking-tight">
-                CDR<span className="text-accent">Reconcile</span>
+                CDR<span className="text-accent">Check</span>
               </span>
             </div>
             <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono">
@@ -654,7 +654,7 @@ export default function Home() {
                 <div className="w-6 h-6 rounded bg-accent/10 flex items-center justify-center">
                   <Database className="w-3 h-3 text-accent" />
                 </div>
-                <span className="font-display">CDRReconcile</span>
+                <span className="font-display">CDRCheck</span>
               </div>
               <div className="text-xs text-muted-foreground font-mono">
                 Demo Testing  • December 2025

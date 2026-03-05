@@ -38,6 +38,10 @@ export const metadata: Metadata = {
       "max-snippet": -1,
     },
   },
+  icons: {
+    icon: "/favicon.svg",
+    apple: "/favicon.svg",
+  },
   openGraph: {
     type: "website",
     locale: "en_US",
@@ -48,7 +52,7 @@ export const metadata: Metadata = {
       "Free CDR reconciliation tool for VoIP carriers. Compare call detail records, identify billing discrepancies, and detect missing calls in seconds.",
     images: [
       {
-        url: "/og-image.png",
+        url: "/og-image.svg",
         width: 1200,
         height: 630,
         alt: "CDRCheck - CDR Reconciliation Tool",
@@ -60,7 +64,7 @@ export const metadata: Metadata = {
     title: "CDRCheck - CDR Reconciliation Tool for VoIP Carriers",
     description:
       "Free CDR reconciliation tool for VoIP carriers. Compare call detail records and identify billing discrepancies in seconds.",
-    images: ["/og-image.png"],
+    images: ["/og-image.svg"],
   },
   alternates: {
     canonical: siteUrl,

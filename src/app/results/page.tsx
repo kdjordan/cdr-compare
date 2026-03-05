@@ -392,7 +392,7 @@ export default function ResultsPage() {
                 <Database className="w-4 h-4 text-accent" />
               </div>
               <span className="font-display font-semibold tracking-tight">
-                CDR<span className="text-accent">Reconcile</span>
+                CDR<span className="text-accent">Check</span>
               </span>
             </div>
             <div className="flex items-center gap-3">

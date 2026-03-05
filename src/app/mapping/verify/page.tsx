@@ -449,7 +449,7 @@ export default function VerifyMappingPage() {
                 <Database className="w-4 h-4 text-accent" />
               </div>
               <span className="font-display font-semibold tracking-tight">
-                CDR<span className="text-accent">Reconcile</span>
+                CDR<span className="text-accent">Check</span>
               </span>
             </div>
             <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono">
