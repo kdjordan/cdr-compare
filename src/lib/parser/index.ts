@@ -17,6 +17,8 @@ export async function parseFile(file: File): Promise<ParsedFile> {
     return parseXLSX(file);
   } else if (extension === "zip") {
     return parseZIP(file);
+  } else if (extension === "gz") {
+    return parseGZ(file);
   }
 
   throw new Error(`Unsupported file format: ${extension}`);
@@ -199,4 +201,26 @@ function parseCSVString(csvText: string): Promise<ParsedFile> {
       error: (error: Error) => reject(error),
     });
   });
+}
+
+async function parseGZ(file: File): Promise<ParsedFile> {
+  // Get the inner filename by removing .gz extension
+  const innerName = file.name.replace(/\.gz$/i, "");
+  const innerExt = innerName.split(".").pop()?.toLowerCase();
+
+  // Decompress using the browser's built-in DecompressionStream
+  const stream = file.stream().pipeThrough(new DecompressionStream("gzip"));
+  const decompressedBlob = await new Response(stream).blob();
+
+  if (innerExt === "csv") {
+    const csvText = await decompressedBlob.text();
+    return parseCSVString(csvText);
+  } else if (innerExt === "xlsx" || innerExt === "xls") {
+    const decompressedFile = new File([decompressedBlob], innerName);
+    return parseXLSX(decompressedFile);
+  }
+
+  // Default to CSV if no recognizable extension (e.g., just "file.gz")
+  const csvText = await decompressedBlob.text();
+  return parseCSVString(csvText);
 }

@@ -7,6 +7,8 @@ import Papa from "papaparse";
 import JSZip from "jszip";
 import { exec } from "child_process";
 import { promisify } from "util";
+import { createGunzip } from "zlib";
+import { Readable } from "stream";
 
 const execAsync = promisify(exec);
 
@@ -302,6 +304,54 @@ async function parseFile(filePath: string, fileName: string): Promise<Record<str
     }
   }
 
+  if (ext === ".gz") {
+    // Get the inner filename by removing .gz extension
+    const innerName = fileName.replace(/\.gz$/i, "");
+    const innerExt = path.extname(innerName).toLowerCase();
+
+    // Decompress gzip file
+    const compressedBuffer = await readFile(filePath);
+    const decompressedBuffer = await new Promise<Buffer>((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      const gunzip = createGunzip();
+      const readable = Readable.from(compressedBuffer);
+
+      readable.pipe(gunzip)
+        .on("data", (chunk: Buffer) => chunks.push(chunk))
+        .on("end", () => resolve(Buffer.concat(chunks)))
+        .on("error", reject);
+    });
+
+    if (innerExt === ".csv" || innerExt === "") {
+      // Parse as CSV (default if no inner extension)
+      const csvText = decompressedBuffer.toString("utf-8");
+      const result = Papa.parse(csvText, {
+        header: true,
+        skipEmptyLines: true,
+        dynamicTyping: true,
+      });
+      return result.data as Record<string, unknown>[];
+    }
+
+    if (innerExt === ".xlsx" || innerExt === ".xls") {
+      // Write decompressed XLSX to temp file, then convert to CSV
+      const tempXlsxPath = filePath + ".decompressed.xlsx";
+      const tempCsvPath = filePath + ".decompressed.csv";
+      await writeFile(tempXlsxPath, decompressedBuffer);
+
+      try {
+        console.log(`Converting decompressed XLSX to CSV: ${innerName}`);
+        await convertXlsxToCsv(tempXlsxPath, tempCsvPath);
+        console.log(`Conversion complete, parsing CSV...`);
+        const data = await parseCsvFile(tempCsvPath);
+        return data;
+      } finally {
+        await unlink(tempXlsxPath).catch(() => {});
+        await unlink(tempCsvPath).catch(() => {});
+      }
+    }
+  }
+
   throw new Error(`Unsupported file type: ${ext}`);
 }
 
@@ -380,12 +430,12 @@ export async function POST(request: NextRequest) {
     }
 
     // Security: Validate file extensions
-    const allowedExtensions = [".csv", ".xlsx", ".xls", ".zip"];
+    const allowedExtensions = [".csv", ".xlsx", ".xls", ".zip", ".gz"];
     const extA = path.extname(fileA.name).toLowerCase();
     const extB = path.extname(fileB.name).toLowerCase();
     if (!allowedExtensions.includes(extA) || !allowedExtensions.includes(extB)) {
       return NextResponse.json(
-        { error: "Invalid file type. Allowed: CSV, XLSX, XLS, ZIP" },
+        { error: "Invalid file type. Allowed: CSV, XLSX, XLS, ZIP, GZ" },
         { status: 400 }
       );
     }

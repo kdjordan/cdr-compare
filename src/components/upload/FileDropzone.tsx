@@ -11,7 +11,7 @@ interface FileDropzoneProps {
   onClear: () => void;
 }
 
-const acceptedExtensions = [".csv", ".xlsx", ".xls", ".zip"];
+const acceptedExtensions = [".csv", ".xlsx", ".xls", ".zip", ".gz"];
 
 export function FileDropzone({
   label,
@@ -27,7 +27,7 @@ export function FileDropzone({
   const validateFile = useCallback((file: File): boolean => {
     const extension = "." + file.name.split(".").pop()?.toLowerCase();
     if (!acceptedExtensions.includes(extension)) {
-      setError("Please upload a CSV, XLSX, or ZIP file");
+      setError("Please upload a CSV, XLSX, ZIP, or GZ file");
       return false;
     }
     if (file.size > 500 * 1024 * 1024) {
@@ -68,7 +68,7 @@ export function FileDropzone({
     return (bytes / (1024 * 1024)).toFixed(1) + " MB";
   };
 
-  const FileIcon = selectedFile?.name.endsWith(".zip") ? FileArchive : FileSpreadsheet;
+  const FileIcon = selectedFile?.name.endsWith(".zip") || selectedFile?.name.endsWith(".gz") ? FileArchive : FileSpreadsheet;
 
   return (
     <div className="relative bg-card rounded-xl overflow-hidden border border-border">
@@ -124,7 +124,7 @@ export function FileDropzone({
             <input
               id={inputId}
               type="file"
-              accept=".csv,.xlsx,.xls,.zip"
+              accept=".csv,.xlsx,.xls,.zip,.gz"
               onChange={handleFileInput}
               className="sr-only"
             />
@@ -136,7 +136,7 @@ export function FileDropzone({
                 {isDragging ? "Drop file here" : "Drag & drop or click to upload"}
               </p>
               <p className="text-xs text-muted-foreground mt-2">
-                CSV, XLSX, or ZIP up to 500MB
+                CSV, XLSX, ZIP, or GZ up to 500MB
               </p>
             </div>
           </label>
