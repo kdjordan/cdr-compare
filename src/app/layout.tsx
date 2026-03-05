@@ -50,21 +50,12 @@ export const metadata: Metadata = {
     title: "CDRCheck - CDR Reconciliation Tool for VoIP Carriers",
     description:
       "Free CDR reconciliation tool for VoIP carriers. Compare call detail records, identify billing discrepancies, and detect missing calls in seconds.",
-    images: [
-      {
-        url: "/og-image.svg",
-        width: 1200,
-        height: 630,
-        alt: "CDRCheck - CDR Reconciliation Tool",
-      },
-    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "CDRCheck - CDR Reconciliation Tool for VoIP Carriers",
     description:
       "Free CDR reconciliation tool for VoIP carriers. Compare call detail records and identify billing discrepancies in seconds.",
-    images: ["/og-image.svg"],
   },
   alternates: {
     canonical: siteUrl,
