@@ -654,7 +654,24 @@ export default function Home() {
                 © 2026 CDRCheck - All rights reserved.
               </div>
               <div className="text-xs text-muted-foreground">
-                Built with <span className="text-red-500">❤️</span> by Kevin Jordan
+                Built with <span className="text-red-500">❤️</span> by{" "}
+                <a
+                  href="https://kevinjordan.dev"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-accent hover:text-accent/80 transition-colors font-medium group"
+                >
+                  Kevin Jordan
+                  <svg
+                    className="w-3 h-3 opacity-50 group-hover:opacity-100 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-all"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M7 17L17 7M17 7H7M17 7v10" />
+                  </svg>
+                </a>
               </div>
             </div>
           </div>
