@@ -649,15 +649,12 @@ export default function Home() {
         {/* Footer */}
         <footer className="py-8 px-6 border-t border-border/50">
           <div className="container mx-auto max-w-5xl">
-            <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-              <div className="flex items-center gap-3 text-sm text-muted-foreground">
-                <div className="w-6 h-6 rounded bg-accent/10 flex items-center justify-center">
-                  <Database className="w-3 h-3 text-accent" />
-                </div>
-                <span className="font-display">CDRCheck</span>
+            <div className="flex flex-col items-center gap-2 text-center">
+              <div className="text-sm text-muted-foreground">
+                © 2026 CDRCheck - All rights reserved.
               </div>
-              <div className="text-xs text-muted-foreground font-mono">
-                Demo Testing  • December 2025
+              <div className="text-xs text-muted-foreground">
+                Built with <span className="text-red-500">❤️</span> by Kevin Jordan
               </div>
             </div>
           </div>
