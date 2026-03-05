@@ -27,6 +27,8 @@ async function parseCSV(file: File): Promise<ParsedFile> {
     const sampleRows: Record<string, string>[] = [];
     let headers: string[] = [];
     let rowCount = 0;
+    let bytesProcessed = 0;
+    let aborted = false;
 
     Papa.parse(file, {
       header: true,
@@ -44,12 +46,29 @@ async function parseCSV(file: File): Promise<ParsedFile> {
           }
           rowCount++;
         }
+
+        // Track bytes for estimation
+        bytesProcessed += results.data.length * 100; // rough estimate
+
+        // Abort early once we have enough samples (save memory on large files)
+        if (sampleRows.length >= 100 && rowCount >= 1000) {
+          aborted = true;
+          parser.abort();
+        }
       },
       complete: () => {
+        let estimatedTotal = rowCount;
+
+        // If we aborted early, estimate total rows based on file size
+        if (aborted && bytesProcessed > 0) {
+          const avgBytesPerRow = bytesProcessed / rowCount;
+          estimatedTotal = Math.round(file.size / avgBytesPerRow);
+        }
+
         resolve({
           headers,
           sampleRows,
-          totalRows: rowCount,
+          totalRows: estimatedTotal,
         });
       },
       error: (error: Error) => reject(error),
@@ -139,11 +158,12 @@ function parseCSVString(csvText: string): Promise<ParsedFile> {
     const sampleRows: Record<string, string>[] = [];
     let headers: string[] = [];
     let rowCount = 0;
+    let aborted = false;
 
     Papa.parse(csvText, {
       header: true,
       skipEmptyLines: true,
-      chunk: (results: Papa.ParseResult<Record<string, string>>) => {
+      chunk: (results: Papa.ParseResult<Record<string, string>>, parser: Papa.Parser) => {
         if (rowCount === 0 && results.data.length > 0) {
           headers = Object.keys(results.data[0]);
         }
@@ -154,12 +174,26 @@ function parseCSVString(csvText: string): Promise<ParsedFile> {
           }
           rowCount++;
         }
+
+        // Abort early once we have enough samples
+        if (sampleRows.length >= 100 && rowCount >= 1000) {
+          aborted = true;
+          parser.abort();
+        }
       },
       complete: () => {
+        let estimatedTotal = rowCount;
+
+        // If we aborted early, estimate based on text length
+        if (aborted && rowCount > 0) {
+          const avgCharsPerRow = csvText.length / rowCount * (rowCount / 1000);
+          estimatedTotal = Math.round(csvText.length / (avgCharsPerRow || 100));
+        }
+
         resolve({
           headers,
           sampleRows,
-          totalRows: rowCount,
+          totalRows: estimatedTotal,
         });
       },
       error: (error: Error) => reject(error),

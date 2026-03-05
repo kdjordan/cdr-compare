@@ -10,6 +10,72 @@ import { promisify } from "util";
 
 const execAsync = promisify(exec);
 
+// Concurrency control - limit simultaneous processing jobs
+const MAX_CONCURRENT_JOBS = 2;
+let activeJobs = 0;
+let lastJobStartTime = 0;
+const JOB_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes max per job
+const waitingQueue: Array<{ resolve: () => void; reject: (err: Error) => void }> = [];
+
+// Safety: reset stuck jobs (in case a job crashes without releasing)
+function checkAndResetStuckJobs() {
+  if (activeJobs > 0 && lastJobStartTime > 0) {
+    const elapsed = Date.now() - lastJobStartTime;
+    if (elapsed > JOB_TIMEOUT_MS) {
+      console.log(`[Concurrency] Resetting stuck jobs. activeJobs was ${activeJobs}, elapsed ${elapsed}ms`);
+      activeJobs = 0;
+      lastJobStartTime = 0;
+    }
+  }
+}
+
+async function acquireSlot(timeoutMs: number = 30000): Promise<{ acquired: boolean; queuePosition?: number }> {
+  // Check for stuck jobs first
+  checkAndResetStuckJobs();
+
+  if (activeJobs < MAX_CONCURRENT_JOBS) {
+    activeJobs++;
+    lastJobStartTime = Date.now();
+    return { acquired: true };
+  }
+
+  // Queue position for feedback
+  const queuePosition = waitingQueue.length + 1;
+
+  // Wait for a slot with timeout
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      // Remove from queue on timeout
+      const idx = waitingQueue.findIndex(w => w.resolve === onSlotAvailable);
+      if (idx !== -1) waitingQueue.splice(idx, 1);
+      resolve({ acquired: false, queuePosition });
+    }, timeoutMs);
+
+    const onSlotAvailable = () => {
+      clearTimeout(timeout);
+      activeJobs++;
+      resolve({ acquired: true });
+    };
+
+    waitingQueue.push({
+      resolve: onSlotAvailable,
+      reject: () => {
+        clearTimeout(timeout);
+        resolve({ acquired: false, queuePosition });
+      }
+    });
+  });
+}
+
+function releaseSlot() {
+  activeJobs--;
+  // Wake up next waiting request
+  if (waitingQueue.length > 0 && activeJobs < MAX_CONCURRENT_JOBS) {
+    const next = waitingQueue.shift();
+    next?.resolve();
+  }
+}
+
 // Types
 interface ColumnMapping {
   a_number: string | null;
@@ -239,7 +305,34 @@ async function parseFile(filePath: string, fileName: string): Promise<Record<str
   throw new Error(`Unsupported file type: ${ext}`);
 }
 
+// Status endpoint - check server capacity before uploading
+export async function GET() {
+  // Check for stuck jobs before reporting status
+  checkAndResetStuckJobs();
+
+  return NextResponse.json({
+    activeJobs,
+    maxJobs: MAX_CONCURRENT_JOBS,
+    queueLength: waitingQueue.length,
+    available: activeJobs < MAX_CONCURRENT_JOBS
+  });
+}
+
 export async function POST(request: NextRequest) {
+  // Check concurrency - wait up to 30s for a slot
+  const slot = await acquireSlot(30000);
+  if (!slot.acquired) {
+    return NextResponse.json(
+      {
+        error: "Server is busy processing other files. Please try again in a few minutes.",
+        queuePosition: slot.queuePosition,
+        activeJobs: activeJobs,
+        maxJobs: MAX_CONCURRENT_JOBS
+      },
+      { status: 503, headers: { "Retry-After": "60" } }
+    );
+  }
+
   const jobId = uuidv4();
   const dbPath = path.join("/tmp", `job-${jobId}.db`);
   const fileAPath = path.join("/tmp", `job-${jobId}-fileA`);
@@ -361,6 +454,7 @@ export async function POST(request: NextRequest) {
 
     if (!dataA.length || !dataB.length) {
       await cleanup();
+      releaseSlot();
       return NextResponse.json({ error: "One or both files contain no data" }, { status: 400 });
     }
 
@@ -368,6 +462,7 @@ export async function POST(request: NextRequest) {
     const MAX_ROWS = 2_000_000; // 2 million rows max
     if (dataA.length > MAX_ROWS || dataB.length > MAX_ROWS) {
       await cleanup();
+      releaseSlot();
       return NextResponse.json(
         { error: `File exceeds maximum row limit (${MAX_ROWS.toLocaleString()} rows)` },
         { status: 413 }
@@ -1066,8 +1161,9 @@ export async function POST(request: NextRequest) {
 
     console.log("Summary:", summary);
 
-    // Cleanup database
+    // Cleanup database and release concurrency slot
     await cleanup();
+    releaseSlot();
 
     // MEMORY OPTIMIZATION: Get sampled discrepancies directly from collector
     // The collector already keeps only top N per category, sorted by |cost_difference|
@@ -1106,6 +1202,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("Processing error:", error);
     await cleanup();
+    releaseSlot();
 
     return NextResponse.json(
       {

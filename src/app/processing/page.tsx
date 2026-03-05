@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Database, Loader2, CheckCircle, AlertCircle } from "lucide-react";
+import { Database, Loader2, CheckCircle, AlertCircle, Users, RefreshCw } from "lucide-react";
 import { useReconciliation, ReconciliationResults } from "@/context/ReconciliationContext";
 
 const PROCESSING_STEPS = [
@@ -20,6 +20,8 @@ export default function ProcessingPage() {
   const [currentStep, setCurrentStep] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [isComplete, setIsComplete] = useState(false);
+  const [isServerBusy, setIsServerBusy] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
   const processingStarted = useRef(false);
 
   // Redirect if no data
@@ -29,6 +31,14 @@ export default function ProcessingPage() {
     }
   }, [fileA, fileB, mappingA, mappingB, router]);
 
+  // Retry handler
+  const handleRetry = () => {
+    setIsServerBusy(false);
+    setError(null);
+    processingStarted.current = false;
+    setRetryCount((c) => c + 1);
+  };
+
   // Process the files
   useEffect(() => {
     if (!fileA || !fileB || !mappingA || !mappingB) return;
@@ -37,6 +47,10 @@ export default function ProcessingPage() {
 
     const processFiles = async () => {
       try {
+        // Reset states on retry
+        setIsServerBusy(false);
+        setError(null);
+
         // Step 1: Uploading
         setCurrentStep(0);
 
@@ -58,6 +72,12 @@ export default function ProcessingPage() {
         setCurrentStep(2);
 
         if (!response.ok) {
+          // Handle server busy (503) specially
+          if (response.status === 503) {
+            setIsServerBusy(true);
+            setCurrentStep(0);
+            return;
+          }
           const errorData = await response.json();
           throw new Error(errorData.details || errorData.error || "Processing failed");
         }
@@ -95,7 +115,8 @@ export default function ProcessingPage() {
     };
 
     processFiles();
-  }, [fileA, fileB, mappingA, mappingB, router, setResults]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fileA, fileB, mappingA, mappingB, router, setResults, retryCount]);
 
   if (!fileA || !fileB) {
     return null;
@@ -136,14 +157,16 @@ export default function ProcessingPage() {
               className="text-center mb-12"
             >
               <h1 className="font-display text-3xl font-bold tracking-tight mb-3">
-                {error ? "Processing Error" : isComplete ? "Processing Complete" : "Processing Your CDRs"}
+                {error ? "Processing Error" : isServerBusy ? "Server Busy" : isComplete ? "Processing Complete" : "Processing Your CDRs"}
               </h1>
               <p className="text-muted-foreground">
                 {error
                   ? "An error occurred during processing"
-                  : isComplete
-                    ? "Redirecting to your results..."
-                    : `Comparing ${fileA.totalRows.toLocaleString()} records against ${fileB.totalRows.toLocaleString()} records`}
+                  : isServerBusy
+                    ? "All processing slots are currently in use"
+                    : isComplete
+                      ? "Redirecting to your results..."
+                      : `Comparing ${fileA.totalRows.toLocaleString()} records against ${fileB.totalRows.toLocaleString()} records`}
               </p>
             </motion.div>
 
@@ -175,8 +198,48 @@ export default function ProcessingPage() {
               </motion.div>
             )}
 
+            {/* Server Busy State */}
+            {isServerBusy && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.1 }}
+                className="relative rounded-2xl p-px bg-gradient-to-b from-blue-500/30 via-border/50 to-border/20"
+              >
+                <div className="relative bg-gradient-to-b from-card to-background rounded-2xl p-8">
+                  <div className="flex items-start gap-4">
+                    <div className="w-12 h-12 rounded-full bg-blue-500/20 flex items-center justify-center flex-shrink-0">
+                      <Users className="w-6 h-6 text-blue-500" />
+                    </div>
+                    <div className="flex-1">
+                      <h3 className="font-display font-semibold text-lg mb-2">Server is at Capacity</h3>
+                      <p className="text-muted-foreground text-sm mb-4">
+                        Other users are currently processing files. Please wait a moment and try again.
+                        Your files are still ready - just click retry when you&apos;re ready.
+                      </p>
+                      <div className="flex gap-3">
+                        <button
+                          onClick={handleRetry}
+                          className="px-6 py-3 rounded-xl font-display font-semibold text-sm border bg-blue-500/10 border-blue-500/30 text-blue-500 hover:bg-blue-500/20 transition-all flex items-center gap-2"
+                        >
+                          <RefreshCw className="w-4 h-4" />
+                          Try Again
+                        </button>
+                        <button
+                          onClick={() => router.push("/")}
+                          className="px-6 py-3 rounded-xl font-display font-medium text-sm bg-muted/50 text-muted-foreground hover:bg-muted transition-colors"
+                        >
+                          Start Over
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
             {/* Progress Card */}
-            {!error && (
+            {!error && !isServerBusy && (
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}

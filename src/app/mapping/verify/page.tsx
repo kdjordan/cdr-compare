@@ -15,8 +15,17 @@ import {
   Clock,
   Timer,
   DollarSign,
+  Users,
 } from "lucide-react";
 import { useReconciliation, ColumnMapping } from "@/context/ReconciliationContext";
+
+// Server capacity status
+interface ServerStatus {
+  activeJobs: number;
+  maxJobs: number;
+  queueLength: number;
+  available: boolean;
+}
 
 // Validation types
 interface ColumnValidation {
@@ -374,6 +383,27 @@ export default function VerifyMappingPage() {
   const router = useRouter();
   const { fileA, fileB, mappingA, mappingB } = useReconciliation();
   const [acknowledged, setAcknowledged] = useState(false);
+  const [serverStatus, setServerStatus] = useState<ServerStatus | null>(null);
+
+  // Check server capacity
+  useEffect(() => {
+    const checkStatus = async () => {
+      try {
+        const res = await fetch("/api/process");
+        if (res.ok) {
+          const status = await res.json();
+          setServerStatus(status);
+        }
+      } catch {
+        // Ignore errors - we'll just not show the status
+      }
+    };
+
+    checkStatus();
+    // Poll every 10 seconds
+    const interval = setInterval(checkStatus, 10000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Redirect if no data
   useEffect(() => {
@@ -446,6 +476,29 @@ export default function VerifyMappingPage() {
                 before processing.
               </p>
             </motion.div>
+
+            {/* Server busy banner */}
+            {serverStatus && !serverStatus.available && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.05 }}
+                className="mb-8 rounded-xl border border-blue-500/30 bg-blue-500/10 p-4"
+              >
+                <div className="flex items-start gap-3">
+                  <Users className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <h3 className="font-medium text-blue-500 mb-1">
+                      Server is currently busy
+                    </h3>
+                    <p className="text-sm text-muted-foreground">
+                      {serverStatus.activeJobs} of {serverStatus.maxJobs} processing slots are in use.
+                      You can still start processing - your job will be queued and start when a slot opens.
+                    </p>
+                  </div>
+                </div>
+              </motion.div>
+            )}
 
             {/* Warning banner */}
             {hasWarnings && (
