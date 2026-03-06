@@ -74,17 +74,17 @@ export async function POST(request: NextRequest) {
       "B-Number",
       "Seize Time",
       "Your LRN",
-      "Provider LRN",
+      "Their LRN",
       "Your Duration (s)",
-      "Provider Duration (s)",
+      "Their Duration (s)",
       "Your Rate",
-      "Provider Rate",
+      "Their Rate",
       "Your Cost",
-      "Provider Cost",
+      "Their Cost",
       "Difference ($)",
       "Hung Call Group Size",
       "Your Source Row",
-      "Provider Source Row",
+      "Their Source Row",
     ];
 
     const rows = discrepancies.map((d) => {
@@ -107,9 +107,9 @@ export async function POST(request: NextRequest) {
       const typeLabel = d.type === "missing_in_a"
         ? "Missing in Your Records"
         : d.type === "missing_in_b"
-          ? "Missing in Provider Records"
+          ? "Missing in Their Records"
           : d.type === "zero_duration_in_a"
-            ? "Unanswered (Provider)"
+            ? "Unanswered (Theirs)"
             : d.type === "zero_duration_in_b"
               ? "Unanswered (Yours)"
               : d.type === "lrn_mismatch"
@@ -123,7 +123,7 @@ export async function POST(request: NextRequest) {
                       : d.type === "hung_call_yours"
                         ? "Hung Call (Yours)"
                         : d.type === "hung_call_provider"
-                          ? "Hung Call (Provider)"
+                          ? "Hung Call (Theirs)"
                           : d.type;
 
       return [
@@ -153,30 +153,30 @@ export async function POST(request: NextRequest) {
       [""],
       ["=== BILLING TOTALS ==="],
       ["Your CDR Total", summary.yourTotalBilled != null ? `$${summary.yourTotalBilled.toFixed(2)}` : "N/A"],
-      ["Provider CDR Total", summary.providerTotalBilled != null ? `$${summary.providerTotalBilled.toFixed(2)}` : "N/A"],
+      ["Their CDR Total", summary.providerTotalBilled != null ? `$${summary.providerTotalBilled.toFixed(2)}` : "N/A"],
       ["Billing Difference", summary.billingDifference != null ? `$${summary.billingDifference.toFixed(2)}` : "N/A"],
       [""],
       ["=== TOTAL MINUTES ==="],
       ["Your Total Minutes", summary.yourTotalMinutes != null ? summary.yourTotalMinutes.toFixed(2) : "N/A"],
-      ["Provider Total Minutes", summary.providerTotalMinutes != null ? summary.providerTotalMinutes.toFixed(2) : "N/A"],
+      ["Their Total Minutes", summary.providerTotalMinutes != null ? summary.providerTotalMinutes.toFixed(2) : "N/A"],
       ["Minutes Difference", summary.minutesDifference != null ? summary.minutesDifference.toFixed(2) : "N/A"],
       [""],
       ["=== RECORD COUNTS ==="],
       ["Your Total Records", summary.totalRecordsA],
-      ["Provider Total Records", summary.totalRecordsB],
+      ["Their Total Records", summary.totalRecordsB],
       ["Matched Records", summary.matchedRecords],
       [""],
       ["=== DISCREPANCY BREAKDOWN ==="],
       ["Missing in Your Records (Billed)", summary.billedMissingInYours ?? summary.missingInYours],
-      ["Missing in Provider Records (Billed)", summary.billedMissingInProvider ?? summary.missingInProvider],
+      ["Missing in Their Records (Billed)", summary.billedMissingInProvider ?? summary.missingInProvider],
       ["Duration Mismatches", summary.durationMismatches],
       ["Rate Mismatches", summary.rateMismatches],
       ["Combined Mismatches", summary.costMismatches ?? 0],
       ["LRN Mismatches", summary.lrnMismatches ?? 0],
       ["Zero Duration (Unanswered) - Yours", summary.zeroDurationInYours ?? 0],
-      ["Zero Duration (Unanswered) - Provider", summary.zeroDurationInProvider ?? 0],
+      ["Zero Duration (Unanswered) - Theirs", summary.zeroDurationInProvider ?? 0],
       ["Hung Calls - Yours", `${summary.hungCallsInYours ?? 0} (${summary.hungCallGroupsYours ?? 0} groups)`],
-      ["Hung Calls - Provider", `${summary.hungCallsInProvider ?? 0} (${summary.hungCallGroupsProvider ?? 0} groups)`],
+      ["Hung Calls - Theirs", `${summary.hungCallsInProvider ?? 0} (${summary.hungCallGroupsProvider ?? 0} groups)`],
       ["Total Discrepancies", summary.totalDiscrepancies],
       [""],
       ["=== MONETARY IMPACT ==="],
@@ -187,7 +187,7 @@ export async function POST(request: NextRequest) {
     if (summary.impactBreakdown) {
       summaryRows.push(
         ["Impact from Missing in Yours", `$${summary.impactBreakdown.missingInYours.toFixed(2)}`],
-        ["Impact from Missing in Provider", `$${summary.impactBreakdown.missingInProvider.toFixed(2)}`],
+        ["Impact from Missing in Theirs", `$${summary.impactBreakdown.missingInProvider.toFixed(2)}`],
         ["Impact from Duration Mismatches", `$${summary.impactBreakdown.durationMismatches.toFixed(2)}`],
         ["Impact from Rate Mismatches", `$${summary.impactBreakdown.rateMismatches.toFixed(2)}`],
         ["Impact from Combined Mismatches", `$${summary.impactBreakdown.costMismatches.toFixed(2)}`]

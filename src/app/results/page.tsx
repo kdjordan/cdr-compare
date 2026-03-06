@@ -31,8 +31,8 @@ type DiscrepancyFilter = "all" | "missing_in_a" | "missing_in_b" | "duration_mis
 
 const FILTER_OPTIONS: { value: DiscrepancyFilter; label: string; description?: string }[] = [
   { value: "all", label: "All", description: "All discrepancies" },
-  { value: "missing_in_a", label: "Missing in Yours", description: "Provider billing you for calls you don't have" },
-  { value: "missing_in_b", label: "Missing in Provider", description: "Calls you have that provider doesn't" },
+  { value: "missing_in_a", label: "Missing in Yours", description: "They're billing you for calls you don't have" },
+  { value: "missing_in_b", label: "Missing in Theirs", description: "Calls you have that they don't" },
   { value: "lrn_mismatch", label: "LRN", description: "Different LRN dip results" },
   { value: "duration_mismatch", label: "Duration", description: "Same call, different duration" },
   { value: "rate_mismatch", label: "Rate", description: "Same call, different rate" },
@@ -111,9 +111,9 @@ function getTypeLabel(type: Discrepancy["type"]): string {
     case "missing_in_a":
       return "Missing in Yours";
     case "missing_in_b":
-      return "Missing in Provider";
+      return "Missing in Theirs";
     case "zero_duration_in_a":
-      return "Unanswered (Provider)";
+      return "Unanswered (Theirs)";
     case "zero_duration_in_b":
       return "Unanswered (Yours)";
     case "lrn_mismatch":
@@ -127,7 +127,7 @@ function getTypeLabel(type: Discrepancy["type"]): string {
     case "hung_call_yours":
       return "Hung Call (Yours)";
     case "hung_call_provider":
-      return "Hung Call (Provider)";
+      return "Hung Call (Theirs)";
     default:
       return type;
   }
@@ -528,9 +528,9 @@ export default function ResultsPage() {
                         <p className="text-xs text-muted-foreground">{summary.totalRecordsA.toLocaleString()} records</p>
                       </div>
 
-                      {/* Provider CDR Total */}
+                      {/* Their CDR Total */}
                       <div className="text-center p-3 rounded-lg bg-blue-500/5 border border-blue-500/20">
-                        <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Provider CDR Total</p>
+                        <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Their CDR Total</p>
                         <p className="text-2xl font-bold font-display text-blue-500">
                           ${(summary.providerTotalBilled ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </p>
@@ -551,7 +551,7 @@ export default function ResultsPage() {
                         </p>
                         <p className="text-xs text-muted-foreground">
                           {(summary.billingDifference ?? 0) < 0
-                            ? "Provider billing more"
+                            ? "They're billing more"
                             : (summary.billingDifference ?? 0) > 0
                               ? "Your records higher"
                               : "No difference"}
@@ -569,9 +569,9 @@ export default function ResultsPage() {
                         </p>
                       </div>
 
-                      {/* Provider Total Minutes */}
+                      {/* Their Total Minutes */}
                       <div className="text-center p-3 rounded-lg bg-blue-500/5 border border-blue-500/20">
-                        <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Provider Total Minutes</p>
+                        <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Their Total Minutes</p>
                         <p className="text-xl font-bold font-display text-blue-500">
                           {(summary.providerTotalMinutes ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </p>
@@ -625,10 +625,10 @@ export default function ResultsPage() {
                         >
                           <div className="flex items-center gap-2 mb-1">
                             <AlertTriangle className="w-4 h-4 text-amber-500" />
-                            <span className="text-sm font-medium">Missing in Provider</span>
+                            <span className="text-sm font-medium">Missing in Theirs</span>
                           </div>
                           <p className="text-lg font-bold text-amber-500">{formatMoney(summary.impactBreakdown.missingInProvider)}</p>
-                          <p className="text-xs text-muted-foreground">{summary.billedMissingInProvider || 0} billed calls you have that provider doesn&apos;t</p>
+                          <p className="text-xs text-muted-foreground">{summary.billedMissingInProvider || 0} billed calls you have that they don&apos;t</p>
                         </button>
                       )}
 
@@ -734,7 +734,7 @@ export default function ResultsPage() {
                             )}
                             {(summary.hungCallsInProvider ?? 0) > 0 && (
                               <span className="text-muted-foreground">
-                                <span className="font-medium text-foreground">{(summary.hungCallsInProvider ?? 0).toLocaleString()}</span> in provider records
+                                <span className="font-medium text-foreground">{(summary.hungCallsInProvider ?? 0).toLocaleString()}</span> in their records
                                 <span className="text-xs ml-1">({summary.hungCallGroupsProvider ?? 0} groups)</span>
                               </span>
                             )}
@@ -771,7 +771,7 @@ export default function ResultsPage() {
                             )}
                             {(summary.zeroDurationInProvider || 0) > 0 && (
                               <span className="text-muted-foreground">
-                                <span className="font-medium text-foreground">{(summary.zeroDurationInProvider || 0).toLocaleString()}</span> in provider records only
+                                <span className="font-medium text-foreground">{(summary.zeroDurationInProvider || 0).toLocaleString()}</span> in their records only
                               </span>
                             )}
                           </div>
@@ -793,7 +793,7 @@ export default function ResultsPage() {
                       Your Records: <span className="font-medium text-foreground">{summary.totalRecordsA.toLocaleString()}</span>
                     </div>
                     <div className="text-muted-foreground">
-                      Provider Records: <span className="font-medium text-foreground">{summary.totalRecordsB.toLocaleString()}</span>
+                      Their Records: <span className="font-medium text-foreground">{summary.totalRecordsB.toLocaleString()}</span>
                     </div>
                   </div>
                 </div>

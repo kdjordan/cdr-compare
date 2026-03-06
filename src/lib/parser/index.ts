@@ -29,7 +29,7 @@ async function parseCSV(file: File): Promise<ParsedFile> {
     const sampleRows: Record<string, string>[] = [];
     let headers: string[] = [];
     let rowCount = 0;
-    let bytesProcessed = 0;
+    let lastCursor = 0;
     let aborted = false;
 
     Papa.parse(file, {
@@ -41,19 +41,19 @@ async function parseCSV(file: File): Promise<ParsedFile> {
           headers = Object.keys(results.data[0] as Record<string, string>);
         }
 
-        // Collect sample rows (first 100 for column mapping preview)
+        // Collect sample rows (first 50 for column mapping preview)
         for (const row of results.data as Record<string, string>[]) {
-          if (sampleRows.length < 100) {
+          if (sampleRows.length < 50) {
             sampleRows.push(row);
           }
           rowCount++;
         }
 
-        // Track bytes for estimation
-        bytesProcessed += results.data.length * 100; // rough estimate
+        // Track actual bytes processed using cursor position
+        lastCursor = results.meta.cursor;
 
         // Abort early once we have enough samples (save memory on large files)
-        if (sampleRows.length >= 100 && rowCount >= 1000) {
+        if (sampleRows.length >= 50 && rowCount >= 200) {
           aborted = true;
           parser.abort();
         }
@@ -62,8 +62,8 @@ async function parseCSV(file: File): Promise<ParsedFile> {
         let estimatedTotal = rowCount;
 
         // If we aborted early, estimate total rows based on file size
-        if (aborted && bytesProcessed > 0) {
-          const avgBytesPerRow = bytesProcessed / rowCount;
+        if (aborted && lastCursor > 0) {
+          const avgBytesPerRow = lastCursor / rowCount;
           estimatedTotal = Math.round(file.size / avgBytesPerRow);
         }
 
@@ -160,6 +160,7 @@ function parseCSVString(csvText: string): Promise<ParsedFile> {
     const sampleRows: Record<string, string>[] = [];
     let headers: string[] = [];
     let rowCount = 0;
+    let lastCursor = 0;
     let aborted = false;
 
     Papa.parse(csvText, {
@@ -171,14 +172,17 @@ function parseCSVString(csvText: string): Promise<ParsedFile> {
         }
 
         for (const row of results.data) {
-          if (sampleRows.length < 100) {
+          if (sampleRows.length < 50) {
             sampleRows.push(row);
           }
           rowCount++;
         }
 
+        // Track cursor position for estimation
+        lastCursor = results.meta.cursor;
+
         // Abort early once we have enough samples
-        if (sampleRows.length >= 100 && rowCount >= 1000) {
+        if (sampleRows.length >= 50 && rowCount >= 200) {
           aborted = true;
           parser.abort();
         }
@@ -186,10 +190,10 @@ function parseCSVString(csvText: string): Promise<ParsedFile> {
       complete: () => {
         let estimatedTotal = rowCount;
 
-        // If we aborted early, estimate based on text length
-        if (aborted && rowCount > 0) {
-          const avgCharsPerRow = csvText.length / rowCount * (rowCount / 1000);
-          estimatedTotal = Math.round(csvText.length / (avgCharsPerRow || 100));
+        // If we aborted early, estimate based on cursor position
+        if (aborted && lastCursor > 0) {
+          const avgCharsPerRow = lastCursor / rowCount;
+          estimatedTotal = Math.round(csvText.length / avgCharsPerRow);
         }
 
         resolve({

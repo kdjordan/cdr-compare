@@ -19,6 +19,7 @@ import { Ripple } from "@/components/ui/ripple";
 import { useReconciliation, ColumnMapping, FilePreview, FileSettings } from "@/context/ReconciliationContext";
 import { parseFile } from "@/lib/parser";
 import { ColumnMappingModal } from "@/components/mapping/ColumnMappingModal";
+import { ScreenshotShowcase } from "@/components/home/ScreenshotShowcase";
 
 type UploadStep = "file_a" | "mapping_a" | "file_b" | "mapping_b" | "ready";
 
@@ -643,6 +644,35 @@ export default function Home() {
                 </motion.div>
               ))}
             </div>
+          </div>
+        </section>
+
+        {/* Screenshot Showcase */}
+        <section className="py-20 px-6">
+          <div className="container mx-auto max-w-5xl">
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.5 }}
+              className="text-center mb-12"
+            >
+              <h2 className="font-display text-3xl font-bold tracking-tight mb-4">
+                See it in action
+              </h2>
+              <p className="text-muted-foreground">
+                A clean, intuitive interface designed for speed and clarity
+              </p>
+            </motion.div>
+
+            <motion.div
+              initial={{ opacity: 0, y: 30 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.6, delay: 0.2 }}
+            >
+              <ScreenshotShowcase />
+            </motion.div>
           </div>
         </section>
 
