@@ -306,7 +306,7 @@ export default function Home() {
 
                   <div className={`w-8 h-px ${isFileAComplete ? 'bg-accent' : 'bg-border'}`} />
 
-                  {/* Step 2: Provider CDRs */}
+                  {/* Step 2: Their CDRs */}
                   <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm transition-colors ${
                     isFileBComplete ? 'bg-accent/20 text-accent' : step === 'file_b' || step === 'mapping_b' ? 'bg-accent/10 text-accent' : 'bg-muted/50 text-muted-foreground'
                   }`}>
@@ -315,7 +315,7 @@ export default function Home() {
                     ) : (
                       <div className="w-3.5 h-3.5 rounded-full border-2 border-current flex items-center justify-center text-[10px] font-bold">2</div>
                     )}
-                    <span>Provider CDRs</span>
+                    <span>Their CDRs</span>
                   </div>
 
                   <div className={`w-8 h-px ${isFileBComplete ? 'bg-accent' : 'bg-border'}`} />
@@ -370,7 +370,7 @@ export default function Home() {
                           transition={{ duration: 0.3 }}
                         >
                           <FileDropzone
-                            label="Provider CDRs"
+                            label="Their CDRs"
                             sublabel="Counterparty records to compare"
                             selectedFile={localFileB}
                             onFileSelect={handleFileBSelect}
@@ -384,7 +384,7 @@ export default function Home() {
                               <Check className="w-5 h-5 text-accent" />
                             </div>
                             <div>
-                              <p className="font-medium text-sm">Provider CDRs</p>
+                              <p className="font-medium text-sm">Their CDRs</p>
                               <p className="text-xs text-muted-foreground font-mono">{localFileB?.name}</p>
                             </div>
                           </div>
@@ -457,7 +457,7 @@ export default function Home() {
             fileName={parsedFileB.file.name}
             headers={parsedFileB.headers}
             sampleRows={parsedFileB.sampleRows}
-            fileLabel="Provider CDRs"
+            fileLabel="Their CDRs"
           />
         )}
 

@@ -304,7 +304,7 @@ export default function MappingPage() {
               </div>
               <div className="w-px h-12 bg-border" />
               <div className="text-center">
-                <div className="text-sm text-muted-foreground">Provider CDRs</div>
+                <div className="text-sm text-muted-foreground">Their CDRs</div>
                 <div className="font-mono text-sm">{fileB.file.name}</div>
                 <div className="text-xs text-accent">{fileB.totalRows.toLocaleString()} rows</div>
               </div>
@@ -325,7 +325,7 @@ export default function MappingPage() {
                 onMappingChange={setLocalMappingA}
               />
               <ColumnMapper
-                title="Provider CDRs"
+                title="Their CDRs"
                 headers={fileB.headers}
                 sampleRows={fileB.sampleRows}
                 mapping={localMappingB}

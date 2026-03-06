@@ -537,7 +537,7 @@ export default function VerifyMappingPage() {
                 mapping={mappingA}
               />
               <ValidationCard
-                title="Provider CDRs"
+                title="Their CDRs"
                 fileName={fileB.file.name}
                 validation={validationB}
                 mapping={mappingB}
