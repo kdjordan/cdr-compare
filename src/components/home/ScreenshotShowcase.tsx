@@ -4,6 +4,19 @@ import { useState, useEffect, useRef } from "react";
 import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
 
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
+
+  return isMobile;
+}
+
 const screenshots = [
   {
     id: "mapping",
@@ -35,10 +48,13 @@ export function ScreenshotShowcase() {
   const [activeIndex, setActiveIndex] = useState(0);
   const [isInView, setIsInView] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const isMobile = useIsMobile();
   const active = screenshots[activeIndex];
 
-  // Intersection Observer - start auto-rotate when in viewport
+  // Intersection Observer - start auto-rotate when in viewport (desktop only)
   useEffect(() => {
+    if (isMobile) return;
+
     const observer = new IntersectionObserver(
       ([entry]) => {
         setIsInView(entry.isIntersecting);
@@ -51,18 +67,62 @@ export function ScreenshotShowcase() {
     }
 
     return () => observer.disconnect();
-  }, []);
+  }, [isMobile]);
 
-  // Auto-rotate every 2 seconds when in view
+  // Auto-rotate every 4 seconds when in view (desktop only)
   useEffect(() => {
-    if (!isInView) return;
+    if (!isInView || isMobile) return;
 
     const interval = setInterval(() => {
       setActiveIndex((prev) => (prev + 1) % screenshots.length);
     }, 4000);
 
     return () => clearInterval(interval);
-  }, [isInView]);
+  }, [isInView, isMobile]);
+
+  // Mobile: simple static view without animations
+  if (isMobile) {
+    return (
+      <div className="w-full max-w-5xl mx-auto">
+        {/* Simple tab buttons */}
+        <div className="flex justify-center gap-1 mb-4 flex-wrap">
+          {screenshots.map((screenshot, index) => (
+            <button
+              key={screenshot.id}
+              onClick={() => setActiveIndex(index)}
+              className={`
+                px-3 py-1.5 rounded-lg text-xs font-medium transition-colors
+                ${
+                  index === activeIndex
+                    ? "bg-accent/20 text-accent"
+                    : "bg-muted/30 text-muted-foreground"
+                }
+              `}
+            >
+              {screenshot.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Simple image display */}
+        <div className="relative rounded-xl overflow-hidden border border-border/50">
+          <div className="relative aspect-[16/10]">
+            <Image
+              src={active.src}
+              alt={active.label}
+              fill
+              className="object-cover object-top"
+              sizes="100vw"
+            />
+          </div>
+        </div>
+
+        <p className="text-center text-sm text-muted-foreground mt-4">
+          {active.description}
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div ref={containerRef} className="w-full max-w-5xl mx-auto">
@@ -129,7 +189,8 @@ export function ScreenshotShowcase() {
                   alt={active.label}
                   fill
                   className="object-cover object-top"
-                  priority
+                  priority={activeIndex === 0}
+                  sizes="(max-width: 768px) 100vw, 1024px"
                 />
               </motion.div>
             </AnimatePresence>

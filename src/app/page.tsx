@@ -183,13 +183,13 @@ export default function Home() {
 
         {/* Hero Section */}
         <section className="pt-20 pb-8 px-6 relative">
-          {/* Ripple effect centered in hero */}
-          <div className="absolute inset-0 flex items-center justify-center overflow-hidden">
+          {/* Ripple effect centered in hero - hidden on mobile for performance */}
+          <div className="absolute inset-0 flex items-center justify-center overflow-hidden hidden md:flex">
             <div className="relative w-[1400px] h-[1400px]">
               <Ripple
                 mainCircleSize={120}
                 mainCircleOpacity={0.45}
-                numCircles={14}
+                numCircles={10}
               />
             </div>
           </div>
