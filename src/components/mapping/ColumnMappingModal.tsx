@@ -4,7 +4,7 @@ import { useState, useMemo, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Check, AlertCircle, Zap } from "lucide-react";
 import { ColumnMapping, FileSettings, DurationUnit, RatePrecision, Timezone, DEFAULT_FILE_SETTINGS } from "@/context/ReconciliationContext";
-import { SWITCH_PRESETS, detectPreset, isPresetValidForHeaders, SwitchPreset } from "@/lib/presets";
+import { detectPreset, SwitchPreset } from "@/lib/presets";
 
 // Time field groups - selecting one hides the others in the group
 const TIME_FIELD_GROUPS = {
@@ -76,7 +76,6 @@ export function ColumnMappingModal({
     return initial;
   });
 
-  const [selectedPreset, setSelectedPreset] = useState<string | null>(null);
   const [detectedPreset, setDetectedPreset] = useState<SwitchPreset | null>(null);
 
   // File settings (duration unit, rate precision)
@@ -88,7 +87,6 @@ export function ColumnMappingModal({
       const detected = detectPreset(headers);
       setDetectedPreset(detected);
       if (detected) {
-        setSelectedPreset(detected.id);
         // Auto-apply the detected preset
         applyPresetMapping(detected);
       }
@@ -136,15 +134,6 @@ export function ColumnMappingModal({
       ratePrecision: preset.ratePrecision,
       timezone: "UTC",
     });
-  };
-
-  // Apply a preset to the mapping
-  const applyPreset = (preset: SwitchPreset) => {
-    if (!isPresetValidForHeaders(preset, headers)) {
-      return;
-    }
-    setSelectedPreset(preset.id);
-    applyPresetMapping(preset);
   };
 
   // Track which header is assigned to which field (reverse lookup)
@@ -319,50 +308,35 @@ export function ColumnMappingModal({
             </button>
           </div>
 
-          {/* Preset Selector */}
-          <div className="px-6 py-4 bg-accent/10 border-b border-border">
+          {/* Format Detection / Clear */}
+          <div className="px-6 py-3 bg-accent/10 border-b border-border">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <Zap className="w-4 h-4 text-accent" />
-                  <span className="text-sm font-medium">Switch Format:</span>
-                </div>
-                <select
-                  value={selectedPreset || ""}
-                  onChange={(e) => setSelectedPreset(e.target.value || null)}
-                  className="px-4 py-2 rounded-lg text-sm font-medium bg-muted/50 border border-border text-accent focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent min-w-[180px]"
-                >
-                  <option value="">-- Select Format --</option>
-                  {SWITCH_PRESETS.map((preset) => (
-                    <option key={preset.id} value={preset.id}>
-                      {preset.name} {detectedPreset?.id === preset.id ? "(detected)" : ""}
-                    </option>
-                  ))}
-                  <option value="manual">Manual Mapping</option>
-                </select>
-                {detectedPreset && !selectedPreset && (
-                  <span className="text-xs text-accent bg-accent/20 px-2 py-1 rounded">
-                    Detected: {detectedPreset.name}
-                  </span>
+              <div className="flex items-center gap-3">
+                {detectedPreset ? (
+                  <>
+                    <Zap className="w-4 h-4 text-accent" />
+                    <span className="text-sm font-medium">Detected Format:</span>
+                    <span className="text-sm text-accent bg-accent/20 px-2 py-1 rounded font-medium">
+                      {detectedPreset.name}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-sm text-muted-foreground">No format detected - map columns manually</span>
+                  </>
                 )}
               </div>
               <button
                 onClick={() => {
-                  const preset = SWITCH_PRESETS.find(p => p.id === selectedPreset);
-                  if (preset) applyPreset(preset);
+                  const cleared: Record<string, string | null> = {};
+                  CANONICAL_FIELDS.forEach((field) => {
+                    cleared[field.key] = null;
+                  });
+                  setMapping(cleared);
                 }}
-                disabled={!selectedPreset || selectedPreset === "manual"}
-                className={`
-                  px-6 py-2.5 rounded-lg font-display font-semibold text-sm
-                  border transition-all duration-300 flex items-center gap-2
-                  ${selectedPreset && selectedPreset !== "manual"
-                    ? "bg-accent/10 border-accent/30 text-accent hover:bg-accent/20"
-                    : "bg-muted/50 border-border text-muted-foreground cursor-not-allowed"
-                  }
-                `}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium bg-muted/50 border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
               >
-                <Zap className="w-4 h-4" />
-                Apply Preset
+                Clear All
               </button>
             </div>
           </div>
