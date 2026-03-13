@@ -6,19 +6,48 @@ import { X, Check, AlertCircle, Zap } from "lucide-react";
 import { ColumnMapping, FileSettings, DurationUnit, RatePrecision, Timezone, DEFAULT_FILE_SETTINGS } from "@/context/ReconciliationContext";
 import { SWITCH_PRESETS, detectPreset, isPresetValidForHeaders, SwitchPreset } from "@/lib/presets";
 
-const CANONICAL_FIELDS = [
-  { key: "a_number", label: "Calling Number", hint: "ANI, A-Number, Source", required: true, hasAlt: false },
-  { key: "b_number", label: "Called Number", hint: "DNIS, B-Number, Destination", required: true, hasAlt: false },
-  { key: "seize_time", label: "Seize Time", hint: "Call start/attempt time", required: true, hasAlt: true },
-  { key: "answer_time", label: "Answer Time", hint: "Connect time", required: false, hasAlt: true },
-  { key: "end_time", label: "End Time", hint: "Call end time", required: false, hasAlt: true },
-  { key: "billed_duration", label: "Duration", hint: "Seconds billed", required: true, hasAlt: false },
-  { key: "rate", label: "Rate", hint: "Per-minute rate", required: true, hasAlt: false },
-  { key: "lrn", label: "LRN", hint: "Location Routing Number", required: true, hasAlt: false },
-] as const;
+// Time field groups - selecting one hides the others in the group
+const TIME_FIELD_GROUPS = {
+  seize: {
+    datetime: "seize_datetime",
+    date: "seize_date",
+    time: "seize_time_only",
+    required: true,
+  },
+  answer: {
+    datetime: "answer_datetime",
+    date: "answer_date",
+    time: "answer_time_only",
+    required: false,
+  },
+  end: {
+    datetime: "end_datetime",
+    date: "end_date",
+    time: "end_time_only",
+    required: false,
+  },
+} as const;
 
-// Fields that support secondary time columns
-const TIME_FIELDS_WITH_ALT = ["seize_time", "answer_time", "end_time"] as const;
+const CANONICAL_FIELDS = [
+  { key: "a_number", label: "Calling Number", hint: "ANI, A-Number, Source", required: true, group: null },
+  { key: "b_number", label: "Called Number", hint: "DNIS, B-Number, Destination", required: true, group: null },
+  // Seize time group
+  { key: "seize_datetime", label: "Seize Day/Time", hint: "Combined day and time", required: false, group: "seize" },
+  { key: "seize_date", label: "Seize Day", hint: "Day only (use with Seize Time)", required: false, group: "seize" },
+  { key: "seize_time_only", label: "Seize Time", hint: "Time only (use with Seize Day)", required: false, group: "seize" },
+  // Answer time group
+  { key: "answer_datetime", label: "Answer Day/Time", hint: "Combined day and time", required: false, group: "answer" },
+  { key: "answer_date", label: "Answer Day", hint: "Day only", required: false, group: "answer" },
+  { key: "answer_time_only", label: "Answer Time", hint: "Time only", required: false, group: "answer" },
+  // End time group
+  { key: "end_datetime", label: "End Day/Time", hint: "Combined day and time", required: false, group: "end" },
+  { key: "end_date", label: "End Day", hint: "Day only", required: false, group: "end" },
+  { key: "end_time_only", label: "End Time", hint: "Time only", required: false, group: "end" },
+  // Other fields
+  { key: "billed_duration", label: "Duration", hint: "Seconds billed", required: true, group: null },
+  { key: "rate", label: "Rate", hint: "Per-minute rate", required: true, group: null },
+  { key: "lrn", label: "LRN", hint: "Location Routing Number", required: true, group: null },
+] as const;
 
 interface ColumnMappingModalProps {
   isOpen: boolean;
@@ -43,10 +72,6 @@ export function ColumnMappingModal({
     const initial: Record<string, string | null> = {};
     CANONICAL_FIELDS.forEach((field) => {
       initial[field.key] = null;
-      // Add alt fields for time columns
-      if (field.hasAlt) {
-        initial[`${field.key}_alt`] = null;
-      }
     });
     return initial;
   });
@@ -57,65 +82,55 @@ export function ColumnMappingModal({
   // File settings (duration unit, rate precision)
   const [settings, setSettings] = useState<FileSettings>(DEFAULT_FILE_SETTINGS);
 
-  // Auto-detect preset on mount, pre-select it, and apply the mapping
+  // Auto-detect preset on mount
   useEffect(() => {
     if (headers.length > 0) {
       const detected = detectPreset(headers);
       setDetectedPreset(detected);
       if (detected) {
         setSelectedPreset(detected.id);
-        // Auto-apply the detected preset so user sees the mapping immediately
-        const newMapping: Record<string, string | null> = {};
-        CANONICAL_FIELDS.forEach((field) => {
-          const headerName = detected.mapping[field.key as keyof ColumnMapping];
-          if (headerName && headers.includes(headerName)) {
-            newMapping[field.key] = headerName;
-          } else {
-            newMapping[field.key] = null;
-          }
-          // Reset alt fields
-          if (field.hasAlt) {
-            newMapping[`${field.key}_alt`] = null;
-          }
-        });
-        setMapping(newMapping);
-        // Also apply settings from preset
-        setSettings({
-          durationUnit: detected.durationUnit,
-          ratePrecision: detected.ratePrecision,
-          timezone: "UTC",
-        });
+        // Auto-apply the detected preset
+        applyPresetMapping(detected);
       }
     }
   }, [headers]);
 
-  // Apply a preset to the mapping
-  const applyPreset = (preset: SwitchPreset) => {
-    if (!isPresetValidForHeaders(preset, headers)) {
-      return;
-    }
-
-    setSelectedPreset(preset.id);
-
-    // Convert preset mapping to our internal format (field -> header)
+  // Apply preset mapping (maps old format to new format)
+  const applyPresetMapping = (preset: SwitchPreset) => {
     const newMapping: Record<string, string | null> = {};
     CANONICAL_FIELDS.forEach((field) => {
-      const headerName = preset.mapping[field.key as keyof ColumnMapping];
-      // Only apply if the header exists in our file
-      if (headerName && headers.includes(headerName)) {
-        newMapping[field.key] = headerName;
-      } else {
-        newMapping[field.key] = null;
-      }
-      // Reset alt fields when applying preset
-      if (field.hasAlt) {
-        newMapping[`${field.key}_alt`] = null;
-      }
+      newMapping[field.key] = null;
     });
 
-    setMapping(newMapping);
+    // Map simple fields
+    if (preset.mapping.a_number && headers.includes(preset.mapping.a_number)) {
+      newMapping.a_number = preset.mapping.a_number;
+    }
+    if (preset.mapping.b_number && headers.includes(preset.mapping.b_number)) {
+      newMapping.b_number = preset.mapping.b_number;
+    }
+    if (preset.mapping.billed_duration && headers.includes(preset.mapping.billed_duration)) {
+      newMapping.billed_duration = preset.mapping.billed_duration;
+    }
+    if (preset.mapping.rate && headers.includes(preset.mapping.rate)) {
+      newMapping.rate = preset.mapping.rate;
+    }
+    if (preset.mapping.lrn && headers.includes(preset.mapping.lrn)) {
+      newMapping.lrn = preset.mapping.lrn;
+    }
 
-    // Also apply settings from preset
+    // Map time fields - presets use seize_time which is typically datetime
+    if (preset.mapping.seize_time && headers.includes(preset.mapping.seize_time)) {
+      newMapping.seize_datetime = preset.mapping.seize_time;
+    }
+    if (preset.mapping.answer_time && headers.includes(preset.mapping.answer_time)) {
+      newMapping.answer_datetime = preset.mapping.answer_time;
+    }
+    if (preset.mapping.end_time && headers.includes(preset.mapping.end_time)) {
+      newMapping.end_datetime = preset.mapping.end_time;
+    }
+
+    setMapping(newMapping);
     setSettings({
       durationUnit: preset.durationUnit,
       ratePrecision: preset.ratePrecision,
@@ -123,8 +138,16 @@ export function ColumnMappingModal({
     });
   };
 
+  // Apply a preset to the mapping
+  const applyPreset = (preset: SwitchPreset) => {
+    if (!isPresetValidForHeaders(preset, headers)) {
+      return;
+    }
+    setSelectedPreset(preset.id);
+    applyPresetMapping(preset);
+  };
+
   // Track which header is assigned to which field (reverse lookup)
-  // Includes both primary and alt fields
   const headerToField = useMemo(() => {
     const map: Record<string, string> = {};
     Object.entries(mapping).forEach(([fieldKey, headerValue]) => {
@@ -135,15 +158,34 @@ export function ColumnMappingModal({
     return map;
   }, [mapping]);
 
-  // Get all used headers (for excluding from other selections)
-  const usedHeaders = useMemo(() => {
-    return new Set(Object.values(mapping).filter(Boolean) as string[]);
+  // Determine which fields should be hidden based on mutual exclusivity
+  const hiddenFields = useMemo(() => {
+    const hidden = new Set<string>();
+
+    Object.values(TIME_FIELD_GROUPS).forEach((group) => {
+      const datetimeSelected = mapping[group.datetime] !== null;
+      const dateSelected = mapping[group.date] !== null;
+      const timeSelected = mapping[group.time] !== null;
+
+      if (datetimeSelected) {
+        // If datetime is selected, hide date and time
+        hidden.add(group.date);
+        hidden.add(group.time);
+      } else if (dateSelected || timeSelected) {
+        // If date OR time is selected, hide datetime
+        hidden.add(group.datetime);
+      }
+    });
+
+    return hidden;
   }, [mapping]);
 
   // Get available fields for a specific header's dropdown
   const getAvailableFields = (currentHeader: string) => {
     const assignedField = headerToField[currentHeader];
     return CANONICAL_FIELDS.filter((field) => {
+      // Don't show hidden fields
+      if (hiddenFields.has(field.key)) return false;
       // Include if: not assigned anywhere, OR assigned to this header
       return mapping[field.key] === null || mapping[field.key] === currentHeader;
     });
@@ -174,49 +216,41 @@ export function ColumnMappingModal({
     });
   };
 
-  // Handle setting alt (secondary) time column
-  const handleAltFieldSelect = (primaryFieldKey: string, header: string | null) => {
-    const altKey = `${primaryFieldKey}_alt`;
-    setMapping((prev) => {
-      const newMapping = { ...prev };
-
-      // Clear any previous assignment of this header
-      if (header) {
-        Object.keys(newMapping).forEach((key) => {
-          if (newMapping[key] === header) {
-            newMapping[key] = null;
-          }
-        });
-      }
-
-      newMapping[altKey] = header;
-      return newMapping;
-    });
+  // Check if a time group is satisfied (datetime OR both date+time)
+  const isTimeGroupSatisfied = (group: typeof TIME_FIELD_GROUPS.seize) => {
+    const hasDatetime = mapping[group.datetime] !== null;
+    const hasDate = mapping[group.date] !== null;
+    const hasTime = mapping[group.time] !== null;
+    return hasDatetime || (hasDate && hasTime);
   };
 
-  // Get available headers for alt field dropdown (exclude all used headers except current)
-  const getAvailableHeadersForAlt = (primaryFieldKey: string) => {
-    const altKey = `${primaryFieldKey}_alt`;
-    const currentAltValue = mapping[altKey];
-    return headers.filter((h) => {
-      // Include if: not used anywhere, OR is the current alt value
-      return !usedHeaders.has(h) || h === currentAltValue;
-    });
-  };
+  // Validation: check required fields
+  const simpleRequiredFields = CANONICAL_FIELDS
+    .filter((f) => f.required && f.group === null)
+    .map((f) => f.key);
 
-  const requiredFields = CANONICAL_FIELDS.filter((f) => f.required).map((f) => f.key);
-  const isValid = requiredFields.every((key) => mapping[key] !== null);
+  const simpleFieldsValid = simpleRequiredFields.every((key) => mapping[key] !== null);
+  const seizeValid = isTimeGroupSatisfied(TIME_FIELD_GROUPS.seize);
+  const isValid = simpleFieldsValid && seizeValid;
+
+  // Count for progress display
+  const requiredCount = simpleRequiredFields.length + 1; // +1 for seize time group
+  const satisfiedCount = simpleRequiredFields.filter((key) => mapping[key] !== null).length + (seizeValid ? 1 : 0);
 
   const handleConfirm = () => {
+    // Map internal UI fields back to the backend ColumnMapping format
     const columnMapping: ColumnMapping = {
       a_number: mapping.a_number,
       b_number: mapping.b_number,
-      seize_time: mapping.seize_time,
-      seize_time_alt: mapping.seize_time_alt,
-      answer_time: mapping.answer_time,
-      answer_time_alt: mapping.answer_time_alt,
-      end_time: mapping.end_time,
-      end_time_alt: mapping.end_time_alt,
+      // Seize: if datetime is set, use it; otherwise use date with time as alt
+      seize_time: mapping.seize_datetime || mapping.seize_date,
+      seize_time_alt: mapping.seize_datetime ? null : mapping.seize_time_only,
+      // Answer: same logic
+      answer_time: mapping.answer_datetime || mapping.answer_date || null,
+      answer_time_alt: mapping.answer_datetime ? null : mapping.answer_time_only,
+      // End: same logic
+      end_time: mapping.end_datetime || mapping.end_date || null,
+      end_time_alt: mapping.end_datetime ? null : mapping.end_time_only,
       billed_duration: mapping.billed_duration,
       rate: mapping.rate,
       lrn: mapping.lrn,
@@ -224,8 +258,21 @@ export function ColumnMappingModal({
     onConfirm(columnMapping, settings);
   };
 
-  const mappedCount = Object.values(mapping).filter(Boolean).length;
-  const requiredMappedCount = requiredFields.filter((key) => mapping[key] !== null).length;
+  // Get validation message for time groups
+  const getTimeGroupStatus = (group: typeof TIME_FIELD_GROUPS.seize, name: string) => {
+    const hasDatetime = mapping[group.datetime] !== null;
+    const hasDate = mapping[group.date] !== null;
+    const hasTime = mapping[group.time] !== null;
+
+    if (hasDatetime) return null; // Valid
+    if (hasDate && hasTime) return null; // Valid
+    if (hasDate && !hasTime) return `${name} Day selected - also select ${name} Time`;
+    if (!hasDate && hasTime) return `${name} Time selected - also select ${name} Day`;
+    if (group.required) return `Select ${name} Day/Time or both ${name} Day and ${name} Time`;
+    return null;
+  };
+
+  const seizeStatus = getTimeGroupStatus(TIME_FIELD_GROUPS.seize, "Seize");
 
   if (!isOpen) return null;
 
@@ -368,55 +415,11 @@ export function ColumnMappingModal({
               <div className="flex-1" />
               <div className="flex items-center gap-4 text-xs">
                 <span className="text-muted-foreground">
-                  Progress: <span className="text-accent font-medium">{requiredMappedCount}/{requiredFields.length}</span> required
+                  Progress: <span className="text-accent font-medium">{satisfiedCount}/{requiredCount}</span> required
                 </span>
               </div>
             </div>
           </div>
-
-          {/* Time Field Composite Mapping - show when any time field is mapped */}
-          {(mapping.seize_time || mapping.answer_time || mapping.end_time) && (
-            <div className="px-6 py-3 bg-accent/5 border-b border-border">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-xs font-medium text-accent">Split Date/Time Columns</span>
-                <span className="text-xs text-muted-foreground">(optional - if date and time are in separate columns)</span>
-              </div>
-              <div className="flex flex-wrap gap-4">
-                {TIME_FIELDS_WITH_ALT.map((fieldKey) => {
-                  const primaryValue = mapping[fieldKey];
-                  if (!primaryValue) return null;
-
-                  const fieldInfo = CANONICAL_FIELDS.find((f) => f.key === fieldKey);
-                  const altKey = `${fieldKey}_alt`;
-                  const altValue = mapping[altKey];
-                  const availableHeaders = getAvailableHeadersForAlt(fieldKey);
-
-                  return (
-                    <div key={fieldKey} className="flex items-center gap-2 bg-muted/30 rounded-lg px-3 py-2">
-                      <span className="text-xs font-medium text-foreground">{fieldInfo?.label}:</span>
-                      <span className="text-xs font-mono text-accent">{primaryValue}</span>
-                      <span className="text-xs text-muted-foreground">+</span>
-                      <select
-                        value={altValue || ""}
-                        onChange={(e) => handleAltFieldSelect(fieldKey, e.target.value || null)}
-                        className="px-2 py-1 rounded text-xs font-medium bg-muted/50 border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-accent/50 min-w-[120px]"
-                      >
-                        <option value="">No time column</option>
-                        {availableHeaders.map((h) => (
-                          <option key={h} value={h}>{h}</option>
-                        ))}
-                      </select>
-                      {altValue && (
-                        <span className="text-xs text-muted-foreground">
-                          = &quot;{primaryValue}&quot; + &quot;{altValue}&quot;
-                        </span>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
 
           {/* Scrollable content - fixed height for ~5 rows visible, scroll for more */}
           <div className="overflow-x-auto overflow-y-auto max-h-[300px]">
@@ -447,7 +450,7 @@ export function ColumnMappingModal({
                           <option value="">-- Select field --</option>
                           {availableFields.map((field) => (
                             <option key={field.key} value={field.key}>
-                              {field.label} {field.required ? "*" : ""}
+                              {field.label} {field.required || (field.group === "seize") ? "*" : ""}
                             </option>
                           ))}
                         </select>
@@ -514,7 +517,7 @@ export function ColumnMappingModal({
                 <>
                   <AlertCircle className="w-4 h-4 text-mismatch" />
                   <span className="text-mismatch">
-                    {requiredFields.length - requiredMappedCount} required field(s) remaining
+                    {seizeStatus || `${requiredCount - satisfiedCount} required field(s) remaining`}
                   </span>
                 </>
               )}
