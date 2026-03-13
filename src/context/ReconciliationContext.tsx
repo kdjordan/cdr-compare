@@ -4,6 +4,7 @@ import React, { createContext, useContext, useState, ReactNode } from "react";
 
 export type DurationUnit = "seconds" | "milliseconds";
 export type RatePrecision = 4 | 5 | 6;
+export type Timezone = "UTC" | "EST" | "CST" | "MST" | "PST" | "GMT" | "CET" | "IST" | "JST" | "AEST";
 
 export interface FilePreview {
   file: File;
@@ -16,8 +17,11 @@ export interface ColumnMapping {
   a_number: string | null;
   b_number: string | null;
   seize_time: string | null;
+  seize_time_alt: string | null;      // Secondary column for split date/time
   answer_time: string | null;
+  answer_time_alt: string | null;     // Secondary column for split date/time
   end_time: string | null;
+  end_time_alt: string | null;        // Secondary column for split date/time
   billed_duration: string | null;
   rate: string | null;
   lrn: string | null;
@@ -27,11 +31,27 @@ export interface ColumnMapping {
 export interface FileSettings {
   durationUnit: DurationUnit;
   ratePrecision: RatePrecision;
+  timezone: Timezone;
 }
 
 export const DEFAULT_FILE_SETTINGS: FileSettings = {
   durationUnit: "seconds",
   ratePrecision: 4,
+  timezone: "UTC",
+};
+
+// Timezone offsets in hours from UTC
+export const TIMEZONE_OFFSETS: Record<Timezone, number> = {
+  UTC: 0,
+  GMT: 0,
+  EST: -5,
+  CST: -6,
+  MST: -7,
+  PST: -8,
+  CET: 1,
+  IST: 5.5,
+  JST: 9,
+  AEST: 10,
 };
 
 export interface Discrepancy {

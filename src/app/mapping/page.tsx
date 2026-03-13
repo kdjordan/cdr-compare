@@ -40,8 +40,11 @@ function autoDetectMapping(headers: string[]): ColumnMapping {
     a_number: null,
     b_number: null,
     seize_time: null,
+    seize_time_alt: null,
     answer_time: null,
+    answer_time_alt: null,
     end_time: null,
+    end_time_alt: null,
     billed_duration: null,
     rate: null,
     lrn: null,
@@ -51,6 +54,8 @@ function autoDetectMapping(headers: string[]): ColumnMapping {
     const lowerHeader = header.toLowerCase().replace(/[^a-z0-9]/g, "");
 
     for (const [field, patterns] of Object.entries(HEADER_PATTERNS)) {
+      // Skip alt fields in auto-detection
+      if (field.endsWith('_alt')) continue;
       if (mapping[field as keyof ColumnMapping] === null) {
         for (const pattern of patterns) {
           if (lowerHeader.includes(pattern.replace(/[^a-z0-9]/g, ""))) {
@@ -172,8 +177,11 @@ export default function MappingPage() {
       a_number: null,
       b_number: null,
       seize_time: null,
+      seize_time_alt: null,
       answer_time: null,
+      answer_time_alt: null,
       end_time: null,
+      end_time_alt: null,
       billed_duration: null,
       rate: null,
       lrn: null,
@@ -187,8 +195,11 @@ export default function MappingPage() {
       a_number: null,
       b_number: null,
       seize_time: null,
+      seize_time_alt: null,
       answer_time: null,
+      answer_time_alt: null,
       end_time: null,
+      end_time_alt: null,
       billed_duration: null,
       rate: null,
       lrn: null,

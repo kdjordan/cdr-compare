@@ -3,19 +3,22 @@
 import { useState, useMemo, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Check, AlertCircle, Zap } from "lucide-react";
-import { ColumnMapping, FileSettings, DurationUnit, RatePrecision, DEFAULT_FILE_SETTINGS } from "@/context/ReconciliationContext";
+import { ColumnMapping, FileSettings, DurationUnit, RatePrecision, Timezone, DEFAULT_FILE_SETTINGS } from "@/context/ReconciliationContext";
 import { SWITCH_PRESETS, detectPreset, isPresetValidForHeaders, SwitchPreset } from "@/lib/presets";
 
 const CANONICAL_FIELDS = [
-  { key: "a_number", label: "Calling Number", hint: "ANI, A-Number, Source", required: true },
-  { key: "b_number", label: "Called Number", hint: "DNIS, B-Number, Destination", required: true },
-  { key: "seize_time", label: "Seize Time", hint: "Call start/attempt time", required: true },
-  { key: "answer_time", label: "Answer Time", hint: "Connect time", required: false },
-  { key: "end_time", label: "End Time", hint: "Call end time", required: false },
-  { key: "billed_duration", label: "Duration", hint: "Seconds billed", required: true },
-  { key: "rate", label: "Rate", hint: "Per-minute rate", required: true },
-  { key: "lrn", label: "LRN", hint: "Location Routing Number", required: true },
+  { key: "a_number", label: "Calling Number", hint: "ANI, A-Number, Source", required: true, hasAlt: false },
+  { key: "b_number", label: "Called Number", hint: "DNIS, B-Number, Destination", required: true, hasAlt: false },
+  { key: "seize_time", label: "Seize Time", hint: "Call start/attempt time", required: true, hasAlt: true },
+  { key: "answer_time", label: "Answer Time", hint: "Connect time", required: false, hasAlt: true },
+  { key: "end_time", label: "End Time", hint: "Call end time", required: false, hasAlt: true },
+  { key: "billed_duration", label: "Duration", hint: "Seconds billed", required: true, hasAlt: false },
+  { key: "rate", label: "Rate", hint: "Per-minute rate", required: true, hasAlt: false },
+  { key: "lrn", label: "LRN", hint: "Location Routing Number", required: true, hasAlt: false },
 ] as const;
+
+// Fields that support secondary time columns
+const TIME_FIELDS_WITH_ALT = ["seize_time", "answer_time", "end_time"] as const;
 
 interface ColumnMappingModalProps {
   isOpen: boolean;
@@ -40,6 +43,10 @@ export function ColumnMappingModal({
     const initial: Record<string, string | null> = {};
     CANONICAL_FIELDS.forEach((field) => {
       initial[field.key] = null;
+      // Add alt fields for time columns
+      if (field.hasAlt) {
+        initial[`${field.key}_alt`] = null;
+      }
     });
     return initial;
   });
@@ -66,12 +73,17 @@ export function ColumnMappingModal({
           } else {
             newMapping[field.key] = null;
           }
+          // Reset alt fields
+          if (field.hasAlt) {
+            newMapping[`${field.key}_alt`] = null;
+          }
         });
         setMapping(newMapping);
         // Also apply settings from preset
         setSettings({
           durationUnit: detected.durationUnit,
           ratePrecision: detected.ratePrecision,
+          timezone: "UTC",
         });
       }
     }
@@ -95,6 +107,10 @@ export function ColumnMappingModal({
       } else {
         newMapping[field.key] = null;
       }
+      // Reset alt fields when applying preset
+      if (field.hasAlt) {
+        newMapping[`${field.key}_alt`] = null;
+      }
     });
 
     setMapping(newMapping);
@@ -103,10 +119,12 @@ export function ColumnMappingModal({
     setSettings({
       durationUnit: preset.durationUnit,
       ratePrecision: preset.ratePrecision,
+      timezone: "UTC",
     });
   };
 
   // Track which header is assigned to which field (reverse lookup)
+  // Includes both primary and alt fields
   const headerToField = useMemo(() => {
     const map: Record<string, string> = {};
     Object.entries(mapping).forEach(([fieldKey, headerValue]) => {
@@ -115,6 +133,11 @@ export function ColumnMappingModal({
       }
     });
     return map;
+  }, [mapping]);
+
+  // Get all used headers (for excluding from other selections)
+  const usedHeaders = useMemo(() => {
+    return new Set(Object.values(mapping).filter(Boolean) as string[]);
   }, [mapping]);
 
   // Get available fields for a specific header's dropdown
@@ -151,6 +174,36 @@ export function ColumnMappingModal({
     });
   };
 
+  // Handle setting alt (secondary) time column
+  const handleAltFieldSelect = (primaryFieldKey: string, header: string | null) => {
+    const altKey = `${primaryFieldKey}_alt`;
+    setMapping((prev) => {
+      const newMapping = { ...prev };
+
+      // Clear any previous assignment of this header
+      if (header) {
+        Object.keys(newMapping).forEach((key) => {
+          if (newMapping[key] === header) {
+            newMapping[key] = null;
+          }
+        });
+      }
+
+      newMapping[altKey] = header;
+      return newMapping;
+    });
+  };
+
+  // Get available headers for alt field dropdown (exclude all used headers except current)
+  const getAvailableHeadersForAlt = (primaryFieldKey: string) => {
+    const altKey = `${primaryFieldKey}_alt`;
+    const currentAltValue = mapping[altKey];
+    return headers.filter((h) => {
+      // Include if: not used anywhere, OR is the current alt value
+      return !usedHeaders.has(h) || h === currentAltValue;
+    });
+  };
+
   const requiredFields = CANONICAL_FIELDS.filter((f) => f.required).map((f) => f.key);
   const isValid = requiredFields.every((key) => mapping[key] !== null);
 
@@ -159,8 +212,11 @@ export function ColumnMappingModal({
       a_number: mapping.a_number,
       b_number: mapping.b_number,
       seize_time: mapping.seize_time,
+      seize_time_alt: mapping.seize_time_alt,
       answer_time: mapping.answer_time,
+      answer_time_alt: mapping.answer_time_alt,
       end_time: mapping.end_time,
+      end_time_alt: mapping.end_time_alt,
       billed_duration: mapping.billed_duration,
       rate: mapping.rate,
       lrn: mapping.lrn,
@@ -268,7 +324,7 @@ export function ColumnMappingModal({
           <div className="px-6 py-3 bg-muted/20 border-b border-border">
             <div className="flex items-center gap-6">
               <div className="flex items-center gap-3">
-                <span className="text-xs font-medium text-muted-foreground">Duration Unit:</span>
+                <span className="text-xs font-medium text-muted-foreground">Duration:</span>
                 <select
                   value={settings.durationUnit}
                   onChange={(e) => setSettings(prev => ({ ...prev, durationUnit: e.target.value as DurationUnit }))}
@@ -279,15 +335,34 @@ export function ColumnMappingModal({
                 </select>
               </div>
               <div className="flex items-center gap-3">
-                <span className="text-xs font-medium text-muted-foreground">Rate Precision:</span>
+                <span className="text-xs font-medium text-muted-foreground">Rate:</span>
                 <select
                   value={settings.ratePrecision}
                   onChange={(e) => setSettings(prev => ({ ...prev, ratePrecision: parseInt(e.target.value) as RatePrecision }))}
                   className="px-3 py-1.5 rounded-md text-xs font-medium bg-muted/50 border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-accent/50"
                 >
-                  <option value="4">4 ($0.0012)</option>
-                  <option value="5">5 ($0.00123)</option>
-                  <option value="6">6 ($0.001234)</option>
+                  <option value="4">4 decimals</option>
+                  <option value="5">5 decimals</option>
+                  <option value="6">6 decimals</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-medium text-muted-foreground">Timezone:</span>
+                <select
+                  value={settings.timezone}
+                  onChange={(e) => setSettings(prev => ({ ...prev, timezone: e.target.value as Timezone }))}
+                  className="px-3 py-1.5 rounded-md text-xs font-medium bg-muted/50 border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-accent/50"
+                >
+                  <option value="UTC">UTC (+0h)</option>
+                  <option value="EST">EST (-5h)</option>
+                  <option value="CST">CST (-6h)</option>
+                  <option value="MST">MST (-7h)</option>
+                  <option value="PST">PST (-8h)</option>
+                  <option value="GMT">GMT (+0h)</option>
+                  <option value="CET">CET (+1h)</option>
+                  <option value="IST">IST (+5.5h)</option>
+                  <option value="JST">JST (+9h)</option>
+                  <option value="AEST">AEST (+10h)</option>
                 </select>
               </div>
               <div className="flex-1" />
@@ -295,12 +370,53 @@ export function ColumnMappingModal({
                 <span className="text-muted-foreground">
                   Progress: <span className="text-accent font-medium">{requiredMappedCount}/{requiredFields.length}</span> required
                 </span>
-                <span className="text-muted-foreground">
-                  Total mapped: <span className="font-medium">{mappedCount}/{headers.length}</span>
-                </span>
               </div>
             </div>
           </div>
+
+          {/* Time Field Composite Mapping - show when any time field is mapped */}
+          {(mapping.seize_time || mapping.answer_time || mapping.end_time) && (
+            <div className="px-6 py-3 bg-accent/5 border-b border-border">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-xs font-medium text-accent">Split Date/Time Columns</span>
+                <span className="text-xs text-muted-foreground">(optional - if date and time are in separate columns)</span>
+              </div>
+              <div className="flex flex-wrap gap-4">
+                {TIME_FIELDS_WITH_ALT.map((fieldKey) => {
+                  const primaryValue = mapping[fieldKey];
+                  if (!primaryValue) return null;
+
+                  const fieldInfo = CANONICAL_FIELDS.find((f) => f.key === fieldKey);
+                  const altKey = `${fieldKey}_alt`;
+                  const altValue = mapping[altKey];
+                  const availableHeaders = getAvailableHeadersForAlt(fieldKey);
+
+                  return (
+                    <div key={fieldKey} className="flex items-center gap-2 bg-muted/30 rounded-lg px-3 py-2">
+                      <span className="text-xs font-medium text-foreground">{fieldInfo?.label}:</span>
+                      <span className="text-xs font-mono text-accent">{primaryValue}</span>
+                      <span className="text-xs text-muted-foreground">+</span>
+                      <select
+                        value={altValue || ""}
+                        onChange={(e) => handleAltFieldSelect(fieldKey, e.target.value || null)}
+                        className="px-2 py-1 rounded text-xs font-medium bg-muted/50 border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-accent/50 min-w-[120px]"
+                      >
+                        <option value="">No time column</option>
+                        {availableHeaders.map((h) => (
+                          <option key={h} value={h}>{h}</option>
+                        ))}
+                      </select>
+                      {altValue && (
+                        <span className="text-xs text-muted-foreground">
+                          = &quot;{primaryValue}&quot; + &quot;{altValue}&quot;
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Scrollable content - fixed height for ~5 rows visible, scroll for more */}
           <div className="overflow-x-auto overflow-y-auto max-h-[300px]">

@@ -83,12 +83,35 @@ interface ColumnMapping {
   a_number: string | null;
   b_number: string | null;
   seize_time: string | null;
+  seize_time_alt?: string | null;    // Secondary column for split date/time
   answer_time?: string | null;
+  answer_time_alt?: string | null;   // Secondary column for split date/time
   end_time?: string | null;
+  end_time_alt?: string | null;      // Secondary column for split date/time
   billed_duration: string | null;
   rate?: string | null;
   lrn: string | null;
 }
+
+interface FileSettings {
+  durationUnit: "seconds" | "milliseconds";
+  ratePrecision: number;
+  timezone: string;
+}
+
+// Timezone offsets in hours from UTC
+const TIMEZONE_OFFSETS: Record<string, number> = {
+  UTC: 0,
+  GMT: 0,
+  EST: -5,
+  CST: -6,
+  MST: -7,
+  PST: -8,
+  CET: 1,
+  IST: 5.5,
+  JST: 9,
+  AEST: 10,
+};
 
 // Phone number normalization
 function normalizePhoneNumber(input: string | number | null | undefined): string {
@@ -112,52 +135,89 @@ function normalizePhoneNumber(input: string | number | null | undefined): string
 }
 
 // Timestamp normalization - convert various formats to Unix timestamp
-function normalizeTimestamp(input: string | number | Date | null | undefined): number | null {
+// timezoneOffsetHours: offset from UTC in hours (e.g., -5 for EST, -8 for PST)
+function normalizeTimestamp(
+  input: string | number | Date | null | undefined,
+  timezoneOffsetHours: number = 0
+): number | null {
   if (input === null || input === undefined || input === "") return null;
 
   try {
+    let timestamp: number | null = null;
+
     if (typeof input === "number") {
       // Excel serial date (days since 1900-01-01)
       if (input > 0 && input < 100000) {
         const excelEpoch = new Date(1899, 11, 30);
         const date = new Date(excelEpoch.getTime() + input * 86400000);
-        return Math.floor(date.getTime() / 1000);
+        timestamp = Math.floor(date.getTime() / 1000);
+      } else {
+        // Unix timestamp - check if seconds or milliseconds
+        timestamp = input > 10000000000 ? Math.floor(input / 1000) : input;
       }
-      // Unix timestamp - check if seconds or milliseconds
-      return input > 10000000000 ? Math.floor(input / 1000) : input;
+    } else {
+      const strInput = String(input);
+
+      // Handle format like "11/7/2025 16:55" - treat as local time (will apply offset)
+      // This format is M/D/YYYY HH:mm (US format without timezone)
+      const usDateTimeMatch = strInput.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+      if (usDateTimeMatch) {
+        const [, month, day, year, hour, minute, second = "0"] = usDateTimeMatch;
+        // Create ISO format string - treat as local time (no Z suffix)
+        const isoStr = `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}T${hour.padStart(2, "0")}:${minute.padStart(2, "0")}:${second.padStart(2, "0")}`;
+        const date = new Date(isoStr);
+        if (!isNaN(date.getTime())) {
+          timestamp = Math.floor(date.getTime() / 1000);
+        }
+      }
+
+      // If string already has timezone indicator, parse directly and skip offset adjustment
+      if (timestamp === null && (strInput.includes("+") || strInput.includes("Z") || strInput.includes(" UTC") || strInput.includes(" GMT"))) {
+        const date = new Date(strInput);
+        if (!isNaN(date.getTime())) {
+          // Already has timezone, return directly without offset adjustment
+          return Math.floor(date.getTime() / 1000);
+        }
+      }
+
+      // For other formats, try standard parsing
+      if (timestamp === null) {
+        const date = new Date(input);
+        if (!isNaN(date.getTime())) {
+          timestamp = Math.floor(date.getTime() / 1000);
+        }
+      }
     }
 
-    const strInput = String(input);
+    if (timestamp === null) return null;
 
-    // Handle format like "11/7/2025 16:55" - treat as UTC by appending Z
-    // This format is M/D/YYYY HH:mm (US format without timezone)
-    const usDateTimeMatch = strInput.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
-    if (usDateTimeMatch) {
-      const [, month, day, year, hour, minute, second = "0"] = usDateTimeMatch;
-      // Create ISO format string and parse as UTC
-      const isoStr = `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}T${hour.padStart(2, "0")}:${minute.padStart(2, "0")}:${second.padStart(2, "0")}Z`;
-      const date = new Date(isoStr);
-      if (!isNaN(date.getTime())) {
-        return Math.floor(date.getTime() / 1000);
-      }
-    }
-
-    // If string already has timezone indicator, parse directly
-    if (strInput.includes("+") || strInput.includes("Z") || strInput.includes(" UTC") || strInput.includes(" GMT")) {
-      const date = new Date(strInput);
-      if (!isNaN(date.getTime())) {
-        return Math.floor(date.getTime() / 1000);
-      }
-    }
-
-    // For other formats, try standard parsing but be aware it may use local timezone
-    const date = new Date(input);
-    if (isNaN(date.getTime())) return null;
-
-    return Math.floor(date.getTime() / 1000);
+    // Apply timezone offset to convert to UTC
+    // If data is in PST (-8), we add 8 hours to get UTC
+    // timezoneOffsetHours is already negative for west of UTC, so we subtract it
+    const offsetSeconds = timezoneOffsetHours * 3600;
+    return timestamp - offsetSeconds;
   } catch {
     return null;
   }
+}
+
+// Helper to get timestamp from row with optional alt column
+function getTimestampFromRow(
+  row: Record<string, unknown>,
+  primaryCol: string | null,
+  altCol: string | null | undefined,
+  timezoneOffsetHours: number
+): number | null {
+  if (!primaryCol) return null;
+
+  let value = row[primaryCol];
+
+  // If alt column exists, concatenate with primary
+  if (altCol && row[altCol]) {
+    value = `${value} ${row[altCol]}`;
+  }
+
+  return normalizeTimestamp(value as string | number | Date | null, timezoneOffsetHours);
 }
 
 // Duration normalization
@@ -217,6 +277,9 @@ async function parseCsvFile(filePath: string): Promise<Record<string, unknown>[]
   return result.data as Record<string, unknown>[];
 }
 
+// Maximum decompressed size (500MB)
+const MAX_DECOMPRESSED_SIZE = 500 * 1024 * 1024;
+
 // Parse file based on extension
 async function parseFile(filePath: string, fileName: string): Promise<Record<string, unknown>[]> {
   const ext = path.extname(fileName).toLowerCase();
@@ -273,6 +336,13 @@ async function parseFile(filePath: string, fileName: string): Promise<Record<str
     const entry = zip.files[entryName];
     const entryExt = path.extname(entryName).toLowerCase();
 
+    // Check decompressed size before extracting
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const uncompressedSize = (entry as any)._data?.uncompressedSize;
+    if (uncompressedSize && uncompressedSize > MAX_DECOMPRESSED_SIZE) {
+      throw new Error(`Decompressed file size (${Math.round(uncompressedSize / 1024 / 1024)}MB) exceeds maximum allowed (${MAX_DECOMPRESSED_SIZE / 1024 / 1024}MB)`);
+    }
+
     if (entryExt === ".csv") {
       const csvText = await entry.async("string");
       const result = Papa.parse(csvText, {
@@ -309,15 +379,34 @@ async function parseFile(filePath: string, fileName: string): Promise<Record<str
     const innerName = fileName.replace(/\.gz$/i, "");
     const innerExt = path.extname(innerName).toLowerCase();
 
-    // Decompress gzip file
+    // Check decompressed size from gzip footer (last 4 bytes = ISIZE)
+    // Note: This is mod 2^32, so only accurate for files < 4GB
     const compressedBuffer = await readFile(filePath);
+    if (compressedBuffer.length >= 4) {
+      const isize = compressedBuffer.readUInt32LE(compressedBuffer.length - 4);
+      // Only trust this value if it seems reasonable (not 0 and less than 4GB indicator)
+      if (isize > 0 && isize > MAX_DECOMPRESSED_SIZE) {
+        throw new Error(`Decompressed file size (~${Math.round(isize / 1024 / 1024)}MB) exceeds maximum allowed (${MAX_DECOMPRESSED_SIZE / 1024 / 1024}MB)`);
+      }
+    }
+
+    // Decompress gzip file with size limit enforcement
     const decompressedBuffer = await new Promise<Buffer>((resolve, reject) => {
       const chunks: Buffer[] = [];
+      let totalSize = 0;
       const gunzip = createGunzip();
       const readable = Readable.from(compressedBuffer);
 
       readable.pipe(gunzip)
-        .on("data", (chunk: Buffer) => chunks.push(chunk))
+        .on("data", (chunk: Buffer) => {
+          totalSize += chunk.length;
+          if (totalSize > MAX_DECOMPRESSED_SIZE) {
+            gunzip.destroy();
+            reject(new Error(`Decompressed file exceeds maximum allowed size (${MAX_DECOMPRESSED_SIZE / 1024 / 1024}MB)`));
+            return;
+          }
+          chunks.push(chunk);
+        })
         .on("end", () => resolve(Buffer.concat(chunks)))
         .on("error", reject);
     });
@@ -412,6 +501,8 @@ export async function POST(request: NextRequest) {
     const fileB = formData.get("fileB") as File | null;
     const mappingAStr = formData.get("mappingA") as string | null;
     const mappingBStr = formData.get("mappingB") as string | null;
+    const settingsAStr = formData.get("settingsA") as string | null;
+    const settingsBStr = formData.get("settingsB") as string | null;
 
     if (!fileA || !fileB || !mappingAStr || !mappingBStr) {
       return NextResponse.json(
@@ -443,12 +534,24 @@ export async function POST(request: NextRequest) {
     // Security: Validate mapping JSON to prevent prototype pollution
     let mappingA: ColumnMapping;
     let mappingB: ColumnMapping;
+    let settingsA: FileSettings;
+    let settingsB: FileSettings;
+
+    // Default settings
+    const defaultSettings: FileSettings = {
+      durationUnit: "seconds",
+      ratePrecision: 4,
+      timezone: "UTC",
+    };
+
     try {
       mappingA = JSON.parse(mappingAStr);
       mappingB = JSON.parse(mappingBStr);
+      settingsA = settingsAStr ? JSON.parse(settingsAStr) : defaultSettings;
+      settingsB = settingsBStr ? JSON.parse(settingsBStr) : defaultSettings;
 
       // Ensure mappings are plain objects with expected keys only
-      const allowedKeys = ["a_number", "b_number", "seize_time", "answer_time", "end_time", "billed_duration", "rate", "lrn"];
+      const allowedKeys = ["a_number", "b_number", "seize_time", "seize_time_alt", "answer_time", "answer_time_alt", "end_time", "end_time_alt", "billed_duration", "rate", "lrn"];
       const validateMapping = (m: ColumnMapping) => {
         for (const key of Object.keys(m)) {
           if (!allowedKeys.includes(key)) {
@@ -468,6 +571,11 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+
+    // Get timezone offsets for each file
+    const timezoneOffsetA = TIMEZONE_OFFSETS[settingsA.timezone] ?? 0;
+    const timezoneOffsetB = TIMEZONE_OFFSETS[settingsB.timezone] ?? 0;
+    console.log(`Timezone settings - File A: ${settingsA.timezone} (${timezoneOffsetA}h), File B: ${settingsB.timezone} (${timezoneOffsetB}h)`);
 
     // Log mappings summary
     console.log("Processing with mappings - File A:", Object.entries(mappingA).filter(([,v]) => v).map(([k,v]) => `${k}:${v}`).join(", "));
@@ -574,9 +682,9 @@ export async function POST(request: NextRequest) {
         insertA.run(
           normalizePhoneNumber(row[mappingA.a_number!] as string | number | null),
           normalizePhoneNumber(row[mappingA.b_number!] as string | number | null),
-          normalizeTimestamp(row[mappingA.seize_time!] as string | number | Date | null),
-          mappingA.answer_time ? normalizeTimestamp(row[mappingA.answer_time] as string | number | Date | null) : null,
-          mappingA.end_time ? normalizeTimestamp(row[mappingA.end_time] as string | number | Date | null) : null,
+          getTimestampFromRow(row, mappingA.seize_time, mappingA.seize_time_alt, timezoneOffsetA),
+          getTimestampFromRow(row, mappingA.answer_time ?? null, mappingA.answer_time_alt, timezoneOffsetA),
+          getTimestampFromRow(row, mappingA.end_time ?? null, mappingA.end_time_alt, timezoneOffsetA),
           normalizeDuration(row[mappingA.billed_duration!] as string | number | null),
           mappingA.rate ? normalizeRate(row[mappingA.rate] as string | number | null) : 0,
           normalizePhoneNumber(row[mappingA.lrn!] as string | number | null),
@@ -591,9 +699,9 @@ export async function POST(request: NextRequest) {
         insertB.run(
           normalizePhoneNumber(row[mappingB.a_number!] as string | number | null),
           normalizePhoneNumber(row[mappingB.b_number!] as string | number | null),
-          normalizeTimestamp(row[mappingB.seize_time!] as string | number | Date | null),
-          mappingB.answer_time ? normalizeTimestamp(row[mappingB.answer_time] as string | number | Date | null) : null,
-          mappingB.end_time ? normalizeTimestamp(row[mappingB.end_time] as string | number | Date | null) : null,
+          getTimestampFromRow(row, mappingB.seize_time, mappingB.seize_time_alt, timezoneOffsetB),
+          getTimestampFromRow(row, mappingB.answer_time ?? null, mappingB.answer_time_alt, timezoneOffsetB),
+          getTimestampFromRow(row, mappingB.end_time ?? null, mappingB.end_time_alt, timezoneOffsetB),
           normalizeDuration(row[mappingB.billed_duration!] as string | number | null),
           mappingB.rate ? normalizeRate(row[mappingB.rate] as string | number | null) : 0,
           normalizePhoneNumber(row[mappingB.lrn!] as string | number | null),

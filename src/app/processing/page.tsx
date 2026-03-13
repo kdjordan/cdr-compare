@@ -16,7 +16,7 @@ const PROCESSING_STEPS = [
 
 export default function ProcessingPage() {
   const router = useRouter();
-  const { fileA, fileB, mappingA, mappingB, setResults } = useReconciliation();
+  const { fileA, fileB, mappingA, mappingB, settingsA, settingsB, setResults } = useReconciliation();
   const [currentStep, setCurrentStep] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [isComplete, setIsComplete] = useState(false);
@@ -59,6 +59,8 @@ export default function ProcessingPage() {
         formData.append("fileB", fileB.file);
         formData.append("mappingA", JSON.stringify(mappingA));
         formData.append("mappingB", JSON.stringify(mappingB));
+        formData.append("settingsA", JSON.stringify(settingsA));
+        formData.append("settingsB", JSON.stringify(settingsB));
 
         // Step 2: Processing
         setCurrentStep(1);
