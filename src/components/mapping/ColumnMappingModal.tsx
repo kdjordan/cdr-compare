@@ -226,6 +226,28 @@ export function ColumnMappingModal({
   const requiredCount = simpleRequiredFields.length + 1; // +1 for seize time group
   const satisfiedCount = simpleRequiredFields.filter((key) => mapping[key] !== null).length + (seizeValid ? 1 : 0);
 
+  // Get list of missing required fields for display
+  const getMissingFields = (): string[] => {
+    const missing: string[] = [];
+
+    // Check simple required fields
+    simpleRequiredFields.forEach((key) => {
+      if (mapping[key] === null) {
+        const field = CANONICAL_FIELDS.find((f) => f.key === key);
+        if (field) missing.push(field.label);
+      }
+    });
+
+    // Check seize time group
+    if (!seizeValid) {
+      missing.push("Seize Day/Time");
+    }
+
+    return missing;
+  };
+
+  const missingFields = getMissingFields();
+
   const handleConfirm = () => {
     // Map internal UI fields back to the backend ColumnMapping format
     const columnMapping: ColumnMapping = {
@@ -489,9 +511,13 @@ export function ColumnMappingModal({
                 </>
               ) : (
                 <>
-                  <AlertCircle className="w-4 h-4 text-mismatch" />
+                  <AlertCircle className="w-4 h-4 text-mismatch flex-shrink-0" />
                   <span className="text-mismatch">
-                    {seizeStatus || `${requiredCount - satisfiedCount} required field(s) remaining`}
+                    {seizeStatus || (
+                      <>
+                        Missing: {missingFields.join(", ")}
+                      </>
+                    )}
                   </span>
                 </>
               )}
