@@ -5,14 +5,14 @@
 When asked "what are the stats" or "system stats", read the `METRICS_SECRET` from `.env` and fetch metrics from production:
 
 ```bash
-curl "http://49.13.124.226/api/metrics?key=$METRICS_SECRET"
+curl "https://cdrcheck.com/api/metrics?key=$METRICS_SECRET"
 ```
 
 Returns: `totalCdrs`, `totalBytes`, `formattedBytes`, `updatedAt`
 
 ## Deployment
 
-- Hosted on Coolify at `49.13.124.226`
+- Production: `https://cdrcheck.com` (Coolify on Hetzner `49.13.124.226`)
 - CI/CD deploys from `main` branch
 - `next start` (production mode) serves from the `.next` build output — source changes have NO effect until `next build` runs (either locally or via CI/CD)
 - After pushing, trigger a redeploy in the Coolify dashboard if auto-deploy is not configured
