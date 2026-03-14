@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import Database from "better-sqlite3";
+import { incrementMetrics } from "@/lib/metrics";
 import { v4 as uuidv4 } from "uuid";
 import { unlink, writeFile, readFile } from "fs/promises";
 import path from "path";
@@ -1347,6 +1348,16 @@ export async function POST(request: NextRequest) {
       if (orderA !== orderB) return orderA - orderB;
       return Math.abs(b.cost_difference) - Math.abs(a.cost_difference);
     });
+
+    // Track usage metrics
+    try {
+      const totalCdrs = summary.totalRecordsA + summary.totalRecordsB;
+      const totalBytes = fileA.size + fileB.size;
+      incrementMetrics(totalCdrs, totalBytes);
+    } catch (metricsError) {
+      // Don't fail the request if metrics tracking fails
+      console.error("[Metrics] Failed to increment metrics:", metricsError);
+    }
 
     // Return results
     return NextResponse.json({

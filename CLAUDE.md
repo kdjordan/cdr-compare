@@ -1,5 +1,15 @@
 - you never have to ask me to run the dev server - it is always running in a seperate terminal
 
+## System Stats
+
+When asked "what are the stats" or "system stats", read the `METRICS_SECRET` from `.env` and fetch metrics from production:
+
+```bash
+curl "http://49.13.124.226/api/metrics?key=$METRICS_SECRET"
+```
+
+Returns: `totalCdrs`, `totalBytes`, `formattedBytes`, `updatedAt`
+
 ## Deployment
 
 - Hosted on Coolify at `49.13.124.226`

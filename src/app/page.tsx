@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { FileDropzone } from "@/components/upload/FileDropzone";
 import { Ripple } from "@/components/ui/ripple";
+import { CapacityBanner } from "@/components/ui/CapacityBanner";
 import { useReconciliation, ColumnMapping, FilePreview, FileSettings } from "@/context/ReconciliationContext";
 import { parseFile } from "@/lib/parser";
 import { ColumnMappingModal } from "@/components/mapping/ColumnMappingModal";
@@ -47,6 +48,40 @@ export default function Home() {
 
   // Navigation state - wait for context to update before navigating
   const [pendingVerify, setPendingVerify] = useState(false);
+
+  // Server capacity state
+  const [isServerBusy, setIsServerBusy] = useState(false);
+
+  // Check server capacity on mount and poll while busy
+  useEffect(() => {
+    let pollInterval: NodeJS.Timeout | null = null;
+
+    const checkCapacity = async () => {
+      try {
+        const res = await fetch("/api/process");
+        if (res.ok) {
+          const data = await res.json();
+          setIsServerBusy(!data.available);
+        } else {
+          // Fail-open: if endpoint errors, assume available
+          setIsServerBusy(false);
+        }
+      } catch {
+        // Fail-open: if fetch fails, assume available
+        setIsServerBusy(false);
+      }
+    };
+
+    // Initial check
+    checkCapacity();
+
+    // Start polling every 15s
+    pollInterval = setInterval(checkCapacity, 15000);
+
+    return () => {
+      if (pollInterval) clearInterval(pollInterval);
+    };
+  }, []);
 
   useEffect(() => {
     if (pendingVerify && fileA && fileB && mappingA && mappingB) {
@@ -281,6 +316,9 @@ export default function Home() {
 
               {/* Card content */}
               <div className="relative bg-gradient-to-b from-card to-background rounded-2xl p-8 md:p-10">
+                {/* Capacity warning banner */}
+                <CapacityBanner visible={isServerBusy} />
+
                 {/* Section header */}
                 <div className="text-center mb-8">
                   <h2 className="font-display text-2xl font-bold tracking-tight mb-2">
@@ -340,6 +378,7 @@ export default function Home() {
                       selectedFile={localFileA}
                       onFileSelect={handleFileASelect}
                       onClear={handleClearFileA}
+                      disabled={isServerBusy}
                     />
                   ) : (
                     <div className="flex items-center justify-between p-4 rounded-xl bg-accent/5 border border-accent/20">
@@ -376,6 +415,7 @@ export default function Home() {
                             selectedFile={localFileB}
                             onFileSelect={handleFileBSelect}
                             onClear={handleClearFileB}
+                            disabled={isServerBusy}
                           />
                         </motion.div>
                       ) : (

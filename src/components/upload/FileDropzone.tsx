@@ -9,6 +9,7 @@ interface FileDropzoneProps {
   onFileSelect: (file: File) => void;
   selectedFile: File | null;
   onClear: () => void;
+  disabled?: boolean;
 }
 
 const acceptedExtensions = [".csv", ".xlsx", ".xls", ".zip", ".gz"];
@@ -19,6 +20,7 @@ export function FileDropzone({
   onFileSelect,
   selectedFile,
   onClear,
+  disabled = false,
 }: FileDropzoneProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -42,16 +44,21 @@ export function FileDropzone({
     (e: React.DragEvent) => {
       e.preventDefault();
       setIsDragging(false);
+      if (disabled) return;
       const file = e.dataTransfer.files[0];
       if (file && validateFile(file)) {
         onFileSelect(file);
       }
     },
-    [onFileSelect, validateFile]
+    [onFileSelect, validateFile, disabled]
   );
 
   const handleFileInput = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
+      if (disabled) {
+        e.target.value = "";
+        return;
+      }
       const file = e.target.files?.[0];
       if (file && validateFile(file)) {
         onFileSelect(file);
@@ -59,7 +66,7 @@ export function FileDropzone({
       // Reset input so same file can be selected again
       e.target.value = "";
     },
-    [onFileSelect, validateFile]
+    [onFileSelect, validateFile, disabled]
   );
 
   const formatFileSize = (bytes: number): string => {
@@ -112,13 +119,17 @@ export function FileDropzone({
         ) : (
           /* Upload dropzone state - using label for native file input triggering */
           <label
-            htmlFor={inputId}
+            htmlFor={disabled ? undefined : inputId}
             onDrop={handleDrop}
-            onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+            onDragOver={(e) => { e.preventDefault(); if (!disabled) setIsDragging(true); }}
             onDragLeave={(e) => { e.preventDefault(); setIsDragging(false); }}
             className={`
-              block rounded-lg cursor-pointer transition-all duration-300 border-2 border-dashed
-              ${isDragging ? "border-accent bg-accent/5" : "border-border bg-muted/20 hover:bg-muted/30 hover:border-accent/50"}
+              block rounded-lg transition-all duration-300 border-2 border-dashed
+              ${disabled
+                ? "border-border/50 bg-muted/10 cursor-not-allowed opacity-50"
+                : isDragging
+                  ? "border-accent bg-accent/5 cursor-pointer"
+                  : "border-border bg-muted/20 hover:bg-muted/30 hover:border-accent/50 cursor-pointer"}
             `}
           >
             <input
@@ -126,6 +137,7 @@ export function FileDropzone({
               type="file"
               accept=".csv,.xlsx,.xls,.zip,.gz"
               onChange={handleFileInput}
+              disabled={disabled}
               className="sr-only"
             />
             <div className="p-10 flex flex-col items-center justify-center text-center">
