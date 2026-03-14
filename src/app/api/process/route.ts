@@ -102,16 +102,11 @@ interface FileSettings {
 
 // Timezone offsets in hours from UTC
 const TIMEZONE_OFFSETS: Record<string, number> = {
-  UTC: 0,
-  GMT: 0,
-  EST: -5,
-  CST: -6,
-  MST: -7,
-  PST: -8,
-  CET: 1,
-  IST: 5.5,
-  JST: 9,
-  AEST: 10,
+  "GMT-12": -12, "GMT-11": -11, "GMT-10": -10, "GMT-9": -9, "GMT-8": -8, "GMT-7": -7,
+  "GMT-6": -6, "GMT-5": -5, "GMT-4": -4, "GMT-3": -3, "GMT-2": -2, "GMT-1": -1,
+  "GMT+0": 0, "GMT+1": 1, "GMT+2": 2, "GMT+3": 3, "GMT+4": 4, "GMT+5": 5, "GMT+5:30": 5.5,
+  "GMT+6": 6, "GMT+7": 7, "GMT+8": 8, "GMT+9": 9, "GMT+9:30": 9.5, "GMT+10": 10,
+  "GMT+11": 11, "GMT+12": 12, "GMT+13": 13, "GMT+14": 14,
 };
 
 // Phone number normalization
@@ -542,7 +537,7 @@ export async function POST(request: NextRequest) {
     const defaultSettings: FileSettings = {
       durationUnit: "seconds",
       ratePrecision: 4,
-      timezone: "UTC",
+      timezone: "GMT+0",
     };
 
     try {

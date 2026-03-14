@@ -132,7 +132,7 @@ export function ColumnMappingModal({
     setSettings({
       durationUnit: preset.durationUnit,
       ratePrecision: preset.ratePrecision,
-      timezone: "UTC",
+      timezone: "GMT+0",
     });
   };
 
@@ -396,16 +396,35 @@ export function ColumnMappingModal({
                   onChange={(e) => setSettings(prev => ({ ...prev, timezone: e.target.value as Timezone }))}
                   className="px-3 py-1.5 rounded-md text-xs font-medium bg-muted/50 border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-accent/50"
                 >
-                  <option value="UTC">UTC (+0h)</option>
-                  <option value="EST">EST (-5h)</option>
-                  <option value="CST">CST (-6h)</option>
-                  <option value="MST">MST (-7h)</option>
-                  <option value="PST">PST (-8h)</option>
-                  <option value="GMT">GMT (+0h)</option>
-                  <option value="CET">CET (+1h)</option>
-                  <option value="IST">IST (+5.5h)</option>
-                  <option value="JST">JST (+9h)</option>
-                  <option value="AEST">AEST (+10h)</option>
+                  <option value="GMT-12">GMT-12</option>
+                  <option value="GMT-11">GMT-11</option>
+                  <option value="GMT-10">GMT-10</option>
+                  <option value="GMT-9">GMT-9</option>
+                  <option value="GMT-8">GMT-8</option>
+                  <option value="GMT-7">GMT-7</option>
+                  <option value="GMT-6">GMT-6</option>
+                  <option value="GMT-5">GMT-5</option>
+                  <option value="GMT-4">GMT-4</option>
+                  <option value="GMT-3">GMT-3</option>
+                  <option value="GMT-2">GMT-2</option>
+                  <option value="GMT-1">GMT-1</option>
+                  <option value="GMT+0">GMT+0</option>
+                  <option value="GMT+1">GMT+1</option>
+                  <option value="GMT+2">GMT+2</option>
+                  <option value="GMT+3">GMT+3</option>
+                  <option value="GMT+4">GMT+4</option>
+                  <option value="GMT+5">GMT+5</option>
+                  <option value="GMT+5:30">GMT+5:30</option>
+                  <option value="GMT+6">GMT+6</option>
+                  <option value="GMT+7">GMT+7</option>
+                  <option value="GMT+8">GMT+8</option>
+                  <option value="GMT+9">GMT+9</option>
+                  <option value="GMT+9:30">GMT+9:30</option>
+                  <option value="GMT+10">GMT+10</option>
+                  <option value="GMT+11">GMT+11</option>
+                  <option value="GMT+12">GMT+12</option>
+                  <option value="GMT+13">GMT+13</option>
+                  <option value="GMT+14">GMT+14</option>
                 </select>
               </div>
               <div className="flex-1" />

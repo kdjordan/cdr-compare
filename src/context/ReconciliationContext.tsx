@@ -4,7 +4,10 @@ import React, { createContext, useContext, useState, ReactNode } from "react";
 
 export type DurationUnit = "seconds" | "milliseconds";
 export type RatePrecision = 4 | 5 | 6;
-export type Timezone = "UTC" | "EST" | "CST" | "MST" | "PST" | "GMT" | "CET" | "IST" | "JST" | "AEST";
+export type Timezone =
+  | "GMT-12" | "GMT-11" | "GMT-10" | "GMT-9" | "GMT-8" | "GMT-7" | "GMT-6" | "GMT-5" | "GMT-4" | "GMT-3" | "GMT-2" | "GMT-1"
+  | "GMT+0" | "GMT+1" | "GMT+2" | "GMT+3" | "GMT+4" | "GMT+5" | "GMT+5:30" | "GMT+6" | "GMT+7" | "GMT+8" | "GMT+9" | "GMT+9:30"
+  | "GMT+10" | "GMT+11" | "GMT+12" | "GMT+13" | "GMT+14";
 
 export interface FilePreview {
   file: File;
@@ -37,21 +40,16 @@ export interface FileSettings {
 export const DEFAULT_FILE_SETTINGS: FileSettings = {
   durationUnit: "seconds",
   ratePrecision: 4,
-  timezone: "UTC",
+  timezone: "GMT+0",
 };
 
 // Timezone offsets in hours from UTC
 export const TIMEZONE_OFFSETS: Record<Timezone, number> = {
-  UTC: 0,
-  GMT: 0,
-  EST: -5,
-  CST: -6,
-  MST: -7,
-  PST: -8,
-  CET: 1,
-  IST: 5.5,
-  JST: 9,
-  AEST: 10,
+  "GMT-12": -12, "GMT-11": -11, "GMT-10": -10, "GMT-9": -9, "GMT-8": -8, "GMT-7": -7,
+  "GMT-6": -6, "GMT-5": -5, "GMT-4": -4, "GMT-3": -3, "GMT-2": -2, "GMT-1": -1,
+  "GMT+0": 0, "GMT+1": 1, "GMT+2": 2, "GMT+3": 3, "GMT+4": 4, "GMT+5": 5, "GMT+5:30": 5.5,
+  "GMT+6": 6, "GMT+7": 7, "GMT+8": 8, "GMT+9": 9, "GMT+9:30": 9.5, "GMT+10": 10,
+  "GMT+11": 11, "GMT+12": 12, "GMT+13": 13, "GMT+14": 14,
 };
 
 export interface Discrepancy {
