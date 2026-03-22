@@ -14,7 +14,7 @@ import { Readable } from "stream";
 const execAsync = promisify(exec);
 
 // Concurrency control - limit simultaneous processing jobs
-const MAX_CONCURRENT_JOBS = 2;
+const MAX_CONCURRENT_JOBS = 1;
 let activeJobs = 0;
 let lastJobStartTime = 0;
 const JOB_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes max per job
