@@ -29,6 +29,13 @@ Added tracking of total CDRs processed and total bytes for marketing/analytics.
 - Secret-protected endpoint: `GET /api/metrics?key=SECRET`
 - Persistent storage mounted: `/data/cdrcheck/metrics` → `/app/data`
 
+**Check stats:**
+```bash
+curl "https://cdrcheck.com/api/metrics?key=$METRICS_SECRET"
+```
+
+Returns: `totalCdrs`, `totalBytes`, `formattedBytes`, `updatedAt`
+
 **Files:** `src/lib/metrics.ts`, `src/app/api/metrics/route.ts`
 
 ### Health Check

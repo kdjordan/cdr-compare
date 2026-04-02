@@ -154,13 +154,14 @@ function normalizeTimestamp(
     } else {
       const strInput = String(input);
 
-      // Handle format like "11/7/2025 16:55" - treat as local time (will apply offset)
-      // This format is M/D/YYYY HH:mm (US format without timezone)
+      // Handle format like "11/7/2025 16:55" - US format without timezone
+      // This format is M/D/YYYY HH:mm (US format)
       const usDateTimeMatch = strInput.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
       if (usDateTimeMatch) {
         const [, month, day, year, hour, minute, second = "0"] = usDateTimeMatch;
-        // Create ISO format string - treat as local time (no Z suffix)
-        const isoStr = `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}T${hour.padStart(2, "0")}:${minute.padStart(2, "0")}:${second.padStart(2, "0")}`;
+        // Create ISO format string WITH Z suffix to force UTC interpretation
+        // The timezone offset will then convert from user's selected timezone to UTC
+        const isoStr = `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}T${hour.padStart(2, "0")}:${minute.padStart(2, "0")}:${second.padStart(2, "0")}Z`;
         const date = new Date(isoStr);
         if (!isNaN(date.getTime())) {
           timestamp = Math.floor(date.getTime() / 1000);
@@ -779,8 +780,10 @@ export async function POST(request: NextRequest) {
         ON a.a_number = b.a_number
         AND a.b_number = b.b_number
         AND ABS(COALESCE(a.seize_time, 0) - COALESCE(b.seize_time, 0)) <= ${TIME_TOLERANCE_SECONDS}
-      ORDER BY ABS(COALESCE(a.seize_time, 0) - COALESCE(b.seize_time, 0)) ASC,
-               ABS(a.billed_duration - b.billed_duration) ASC
+      -- Combined score: time_diff + (duration_diff * 5)
+      -- Treats 1 second of duration mismatch as equivalent to 5 seconds of time mismatch
+      -- This prevents wrong pairing when multiple calls have similar timestamps but different durations
+      ORDER BY (ABS(COALESCE(a.seize_time, 0) - COALESCE(b.seize_time, 0)) + ABS(a.billed_duration - b.billed_duration) * 5) ASC
     `);
 
     // Iterate through matches one at a time instead of loading all into memory
