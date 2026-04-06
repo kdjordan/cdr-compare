@@ -10,8 +10,13 @@ import { exec } from "child_process";
 import { promisify } from "util";
 import { createGunzip } from "zlib";
 import { Readable } from "stream";
+import os from "os";
 
 const execAsync = promisify(exec);
+
+// Memory safety settings
+const MIN_FREE_MEMORY_MB = 1500; // Minimum 1.5GB free memory required to start a job
+const JOB_COOLDOWN_MS = 5000; // 5 second delay between jobs for memory to settle
 
 // Concurrency control - limit simultaneous processing jobs
 const MAX_CONCURRENT_JOBS = 1;
@@ -32,9 +37,39 @@ function checkAndResetStuckJobs() {
   }
 }
 
-async function acquireSlot(timeoutMs: number = 30000): Promise<{ acquired: boolean; queuePosition?: number }> {
+// Check available system memory
+function getAvailableMemoryMB(): number {
+  const freeMem = os.freemem();
+  return Math.floor(freeMem / (1024 * 1024));
+}
+
+// Track last job completion time for cooldown
+let lastJobEndTime = 0;
+
+async function acquireSlot(timeoutMs: number = 30000): Promise<{ acquired: boolean; queuePosition?: number; reason?: string; memoryMB?: number }> {
   // Check for stuck jobs first
   checkAndResetStuckJobs();
+
+  // Check cooldown period
+  const timeSinceLastJob = Date.now() - lastJobEndTime;
+  if (lastJobEndTime > 0 && timeSinceLastJob < JOB_COOLDOWN_MS) {
+    const waitTime = JOB_COOLDOWN_MS - timeSinceLastJob;
+    console.log(`[Memory] Cooldown active, waiting ${waitTime}ms before next job`);
+    await new Promise(resolve => setTimeout(resolve, waitTime));
+  }
+
+  // Check available memory
+  const availableMemory = getAvailableMemoryMB();
+  console.log(`[Memory] Available: ${availableMemory}MB, Required: ${MIN_FREE_MEMORY_MB}MB`);
+
+  if (availableMemory < MIN_FREE_MEMORY_MB) {
+    console.log(`[Memory] Insufficient memory: ${availableMemory}MB < ${MIN_FREE_MEMORY_MB}MB required`);
+    return {
+      acquired: false,
+      reason: "low_memory",
+      memoryMB: availableMemory
+    };
+  }
 
   if (activeJobs < MAX_CONCURRENT_JOBS) {
     activeJobs++;
@@ -72,6 +107,8 @@ async function acquireSlot(timeoutMs: number = 30000): Promise<{ acquired: boole
 
 function releaseSlot() {
   activeJobs--;
+  lastJobEndTime = Date.now();
+  console.log(`[Memory] Job completed, cooldown started (${JOB_COOLDOWN_MS}ms)`);
   // Wake up next waiting request
   if (waitingQueue.length > 0 && activeJobs < MAX_CONCURRENT_JOBS) {
     const next = waitingQueue.shift();
@@ -455,12 +492,25 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  // Check concurrency - wait up to 30s for a slot
+  // Check concurrency and memory - wait up to 30s for a slot
   const slot = await acquireSlot(30000);
   if (!slot.acquired) {
+    // Different error messages based on reason
+    if (slot.reason === "low_memory") {
+      return NextResponse.json(
+        {
+          error: `Server memory is low (${slot.memoryMB}MB available). Please wait a moment and try again.`,
+          reason: "low_memory",
+          availableMemoryMB: slot.memoryMB,
+          requiredMemoryMB: MIN_FREE_MEMORY_MB
+        },
+        { status: 503, headers: { "Retry-After": "30" } }
+      );
+    }
     return NextResponse.json(
       {
         error: "Server is busy processing other files. Please try again in a few minutes.",
+        reason: "busy",
         queuePosition: slot.queuePosition,
         activeJobs: activeJobs,
         maxJobs: MAX_CONCURRENT_JOBS
