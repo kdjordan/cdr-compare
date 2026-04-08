@@ -593,6 +593,70 @@ export default function ResultsPage() {
                     </div>
                   </div>
 
+                  {/* Billing Difference Breakdown - Accounting-style ledger */}
+                  {summary.impactBreakdown && (summary.billingDifference ?? 0) !== 0 && (
+                    <div className="p-4 rounded-lg bg-muted/20 border border-border">
+                      <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
+                        <TrendingDown className="w-4 h-4 text-muted-foreground" />
+                        Where is the ${Math.abs(summary.billingDifference ?? 0).toFixed(2)} difference coming from?
+                      </h3>
+                      <div className="space-y-2 font-mono text-sm">
+                        {summary.impactBreakdown.missingInYours !== 0 && (
+                          <div className="flex justify-between items-center py-1 border-b border-border/50">
+                            <span className="text-muted-foreground">Calls in their CDR but not yours</span>
+                            <span className={summary.impactBreakdown.missingInYours < 0 ? "text-destructive" : "text-accent"}>
+                              {summary.impactBreakdown.missingInYours >= 0 ? "+" : ""}{summary.impactBreakdown.missingInYours.toFixed(2)}
+                            </span>
+                          </div>
+                        )}
+                        {summary.impactBreakdown.missingInProvider !== 0 && (
+                          <div className="flex justify-between items-center py-1 border-b border-border/50">
+                            <span className="text-muted-foreground">Calls in your CDR but not theirs</span>
+                            <span className={summary.impactBreakdown.missingInProvider < 0 ? "text-destructive" : "text-accent"}>
+                              {summary.impactBreakdown.missingInProvider >= 0 ? "+" : ""}{summary.impactBreakdown.missingInProvider.toFixed(2)}
+                            </span>
+                          </div>
+                        )}
+                        {summary.impactBreakdown.durationMismatches !== 0 && (
+                          <div className="flex justify-between items-center py-1 border-b border-border/50">
+                            <span className="text-muted-foreground">Duration differences on matched calls</span>
+                            <span className={summary.impactBreakdown.durationMismatches < 0 ? "text-destructive" : "text-accent"}>
+                              {summary.impactBreakdown.durationMismatches >= 0 ? "+" : ""}{summary.impactBreakdown.durationMismatches.toFixed(2)}
+                            </span>
+                          </div>
+                        )}
+                        {summary.impactBreakdown.rateMismatches !== 0 && (
+                          <div className="flex justify-between items-center py-1 border-b border-border/50">
+                            <span className="text-muted-foreground">Rate differences on matched calls</span>
+                            <span className={summary.impactBreakdown.rateMismatches < 0 ? "text-destructive" : "text-accent"}>
+                              {summary.impactBreakdown.rateMismatches >= 0 ? "+" : ""}{summary.impactBreakdown.rateMismatches.toFixed(2)}
+                            </span>
+                          </div>
+                        )}
+                        {summary.impactBreakdown.costMismatches !== 0 && (
+                          <div className="flex justify-between items-center py-1 border-b border-border/50">
+                            <span className="text-muted-foreground">Combined rate+duration differences</span>
+                            <span className={summary.impactBreakdown.costMismatches < 0 ? "text-destructive" : "text-accent"}>
+                              {summary.impactBreakdown.costMismatches >= 0 ? "+" : ""}{summary.impactBreakdown.costMismatches.toFixed(2)}
+                            </span>
+                          </div>
+                        )}
+                        {/* Total line */}
+                        <div className="flex justify-between items-center py-2 mt-1 border-t-2 border-border font-bold">
+                          <span>Net Billing Difference</span>
+                          <span className={(summary.billingDifference ?? 0) >= 0 ? "text-accent" : "text-destructive"}>
+                            {(summary.billingDifference ?? 0) >= 0 ? "+" : ""}{(summary.billingDifference ?? 0).toFixed(2)}
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-2">
+                          {(summary.billingDifference ?? 0) < 0
+                            ? "Negative = they're billing more than your records show. Click categories below to see specific calls."
+                            : "Positive = your records show more than their billing. Click categories below to see specific calls."}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Impact Breakdown - Clickable cards to filter table */}
                   {summary.impactBreakdown && (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
