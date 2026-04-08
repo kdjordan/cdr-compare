@@ -141,8 +141,10 @@ async function parseZIP(file: File): Promise<ParsedFile> {
   const extension = entryName.split(".").pop()?.toLowerCase();
 
   if (extension === "csv") {
-    const csvText = await entry.async("string");
-    return parseCSVString(csvText);
+    // Extract as blob and parse as File to use streaming (avoids string length limits)
+    const csvBlob = await entry.async("blob");
+    const csvFile = new File([csvBlob], entryName, { type: "text/csv" });
+    return parseCSV(csvFile);
   } else if (extension === "xlsx" || extension === "xls") {
     const xlsxBuffer = await entry.async("arraybuffer");
     const blob = new Blob([xlsxBuffer], {
@@ -217,14 +219,15 @@ async function parseGZ(file: File): Promise<ParsedFile> {
   const decompressedBlob = await new Response(stream).blob();
 
   if (innerExt === "csv") {
-    const csvText = await decompressedBlob.text();
-    return parseCSVString(csvText);
+    // Convert to File and use streaming parser (avoids string length limits)
+    const csvFile = new File([decompressedBlob], innerName, { type: "text/csv" });
+    return parseCSV(csvFile);
   } else if (innerExt === "xlsx" || innerExt === "xls") {
     const decompressedFile = new File([decompressedBlob], innerName);
     return parseXLSX(decompressedFile);
   }
 
   // Default to CSV if no recognizable extension (e.g., just "file.gz")
-  const csvText = await decompressedBlob.text();
-  return parseCSVString(csvText);
+  const csvFile = new File([decompressedBlob], innerName || "data.csv", { type: "text/csv" });
+  return parseCSV(csvFile);
 }
