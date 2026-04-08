@@ -112,8 +112,9 @@ export default function Home() {
   const runSpeedTest = async (fileA: File, fileB: File) => {
     setIsTestingSpeed(true);
     try {
-      // Create a 100KB test payload
-      const testSize = 100 * 1024;
+      // Create a 2MB test payload - large enough to measure real throughput
+      // (small payloads are dominated by latency/handshake overhead)
+      const testSize = 2 * 1024 * 1024;
       const testPayload = new Blob([new ArrayBuffer(testSize)]);
 
       const startTime = performance.now();
@@ -124,17 +125,16 @@ export default function Home() {
       const endTime = performance.now();
 
       if (response.ok) {
-        const data = await response.json();
         const totalSize = fileA.size + fileB.size;
         const totalSizeMB = totalSize / (1024 * 1024);
 
-        // Use client-side timing for more accurate upload speed
+        // Use client-side timing for upload speed
         const clientDurationSec = (endTime - startTime) / 1000;
         const clientSpeedBps = testSize / clientDurationSec;
         const clientSpeedMbps = clientSpeedBps / (1024 * 1024);
 
-        // Estimate upload time (add 20% buffer for overhead)
-        const estimatedSeconds = Math.ceil((totalSize / clientSpeedBps) * 1.2);
+        // Estimate upload time (add 10% buffer for variance)
+        const estimatedSeconds = Math.ceil((totalSize / clientSpeedBps) * 1.1);
 
         setUploadEstimate({
           speedMbps: clientSpeedMbps,
