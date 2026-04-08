@@ -663,16 +663,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "One or both files contain no data" }, { status: 400 });
     }
 
-    // Security: Limit total rows to prevent memory exhaustion
-    const MAX_ROWS = 2_000_000; // 2 million rows max
-    if (dataA.length > MAX_ROWS || dataB.length > MAX_ROWS) {
-      await cleanup();
-      releaseSlot();
-      return NextResponse.json(
-        { error: `File exceeds maximum row limit (${MAX_ROWS.toLocaleString()} rows)` },
-        { status: 413 }
-      );
-    }
+    // No row limit - RAM is the natural constraint
+    // Memory check at job start will reject if insufficient
+    console.log(`Processing ${dataA.length.toLocaleString()} + ${dataB.length.toLocaleString()} = ${(dataA.length + dataB.length).toLocaleString()} total rows`);
 
     // Create SQLite database
     db = new Database(dbPath);

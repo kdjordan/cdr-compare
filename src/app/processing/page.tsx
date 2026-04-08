@@ -49,8 +49,8 @@ function getFriendlyErrorMessage(error: unknown): string {
 }
 
 const PROCESSING_STEPS = [
-  { id: "uploading", label: "Uploading files" },
-  { id: "processing", label: "Processing CDRs" },
+  { id: "uploading", label: "Uploading & processing files" },
+  { id: "processing", label: "Parsing records" },
   { id: "matching", label: "Matching records" },
   { id: "analyzing", label: "Analyzing discrepancies" },
   { id: "complete", label: "Generating report" },
@@ -93,7 +93,7 @@ export default function ProcessingPage() {
         setIsServerBusy(false);
         setError(null);
 
-        // Step 1: Uploading
+        // Step 1: Uploading - stays on this step until server responds
         setCurrentStep(0);
 
         const formData = new FormData();
@@ -104,16 +104,16 @@ export default function ProcessingPage() {
         formData.append("settingsA", JSON.stringify(settingsA));
         formData.append("settingsB", JSON.stringify(settingsB));
 
-        // Step 2: Processing
-        setCurrentStep(1);
-
+        // Upload and wait for server response
+        // Note: fetch() includes both upload AND server processing time
         const response = await fetch("/api/process", {
           method: "POST",
           body: formData,
         });
 
-        // Step 3: Matching
-        setCurrentStep(2);
+        // Step 2-4: Server has responded, processing is done
+        // (server does upload, parse, match, analyze all in one request)
+        setCurrentStep(3);
 
         if (!response.ok) {
           // Handle server busy (503) specially

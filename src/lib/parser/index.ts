@@ -2,6 +2,16 @@ import Papa from "papaparse";
 import readXlsxFile from "read-excel-file";
 import JSZip from "jszip";
 
+// Maximum decompressed file size (500MB) - matches server limit
+const MAX_DECOMPRESSED_SIZE = 500 * 1024 * 1024;
+
+function formatFileSize(bytes: number): string {
+  if (bytes >= 1024 * 1024 * 1024) {
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)}GB`;
+  }
+  return `${Math.round(bytes / (1024 * 1024))}MB`;
+}
+
 export interface ParsedFile {
   headers: string[];
   sampleRows: Record<string, string>[];
@@ -140,9 +150,26 @@ async function parseZIP(file: File): Promise<ParsedFile> {
   const entry = zip.files[entryName];
   const extension = entryName.split(".").pop()?.toLowerCase();
 
+  // Check uncompressed size before extracting
+  // JSZip stores this in _data.uncompressedSize for compressed entries
+  const uncompressedSize = (entry as unknown as { _data?: { uncompressedSize?: number } })._data?.uncompressedSize;
+  if (uncompressedSize && uncompressedSize > MAX_DECOMPRESSED_SIZE) {
+    throw new Error(
+      `The file inside this ZIP is too large (${formatFileSize(uncompressedSize)}). Maximum allowed is ${formatFileSize(MAX_DECOMPRESSED_SIZE)}.`
+    );
+  }
+
   if (extension === "csv") {
     // Extract as blob and parse as File to use streaming (avoids string length limits)
     const csvBlob = await entry.async("blob");
+
+    // Double-check actual size after extraction
+    if (csvBlob.size > MAX_DECOMPRESSED_SIZE) {
+      throw new Error(
+        `The file inside this ZIP is too large (${formatFileSize(csvBlob.size)}). Maximum allowed is ${formatFileSize(MAX_DECOMPRESSED_SIZE)}.`
+      );
+    }
+
     const csvFile = new File([csvBlob], entryName, { type: "text/csv" });
     return parseCSV(csvFile);
   } else if (extension === "xlsx" || extension === "xls") {
@@ -217,6 +244,13 @@ async function parseGZ(file: File): Promise<ParsedFile> {
   // Decompress using the browser's built-in DecompressionStream
   const stream = file.stream().pipeThrough(new DecompressionStream("gzip"));
   const decompressedBlob = await new Response(stream).blob();
+
+  // Check decompressed size
+  if (decompressedBlob.size > MAX_DECOMPRESSED_SIZE) {
+    throw new Error(
+      `The decompressed file is too large (${formatFileSize(decompressedBlob.size)}). Maximum allowed is ${formatFileSize(MAX_DECOMPRESSED_SIZE)}.`
+    );
+  }
 
   if (innerExt === "csv") {
     // Convert to File and use streaming parser (avoids string length limits)
