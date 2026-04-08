@@ -311,8 +311,8 @@ async function parseCsvFile(filePath: string): Promise<Record<string, unknown>[]
   return result.data as Record<string, unknown>[];
 }
 
-// Maximum decompressed size (500MB)
-const MAX_DECOMPRESSED_SIZE = 500 * 1024 * 1024;
+// Maximum decompressed size (2GB)
+const MAX_DECOMPRESSED_SIZE = 2 * 1024 * 1024 * 1024;
 
 // Parse file based on extension
 async function parseFile(filePath: string, fileName: string): Promise<Record<string, unknown>[]> {
@@ -558,11 +558,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Security: Validate file sizes (max 500MB each)
-    const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB
+    // Security: Validate file sizes (max 2GB each)
+    const MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024; // 2GB
     if (fileA.size > MAX_FILE_SIZE || fileB.size > MAX_FILE_SIZE) {
       return NextResponse.json(
-        { error: `File size exceeds maximum allowed (${MAX_FILE_SIZE / 1024 / 1024}MB)` },
+        { error: `File size exceeds maximum allowed (${MAX_FILE_SIZE / 1024 / 1024 / 1024}GB)` },
         { status: 413 }
       );
     }

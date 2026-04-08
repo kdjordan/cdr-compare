@@ -32,8 +32,8 @@ export function FileDropzone({
       setError("Please upload a CSV, XLSX, ZIP, or GZ file");
       return false;
     }
-    if (file.size > 500 * 1024 * 1024) {
-      setError("File exceeds maximum size of 500MB");
+    if (file.size > 2 * 1024 * 1024 * 1024) {
+      setError("File exceeds maximum size of 2GB");
       return false;
     }
     setError(null);
@@ -148,7 +148,7 @@ export function FileDropzone({
                 {isDragging ? "Drop file here" : "Drag & drop or click to upload"}
               </p>
               <p className="text-xs text-muted-foreground mt-2">
-                CSV, XLSX, ZIP, or GZ up to 500MB
+                CSV, XLSX, ZIP, or GZ up to 2GB
               </p>
             </div>
           </label>

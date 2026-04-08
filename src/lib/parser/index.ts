@@ -2,8 +2,8 @@ import Papa from "papaparse";
 import readXlsxFile from "read-excel-file";
 import JSZip from "jszip";
 
-// Maximum decompressed file size (500MB) - matches server limit
-const MAX_DECOMPRESSED_SIZE = 500 * 1024 * 1024;
+// Maximum decompressed file size (2GB) - matches server limit
+const MAX_DECOMPRESSED_SIZE = 2 * 1024 * 1024 * 1024;
 
 function formatFileSize(bytes: number): string {
   if (bytes >= 1024 * 1024 * 1024) {

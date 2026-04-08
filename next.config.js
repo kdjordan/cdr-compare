@@ -2,9 +2,9 @@
 const nextConfig = {
   experimental: {
     serverActions: {
-      bodySizeLimit: '500mb',
+      bodySizeLimit: '4gb',
     },
-    proxyClientMaxBodySize: '1gb',
+    proxyClientMaxBodySize: '5gb',
   },
   // Security headers
   async headers() {
