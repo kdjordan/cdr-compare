@@ -18,24 +18,17 @@ const execAsync = promisify(exec);
 const MIN_FREE_MEMORY_MB = 1500; // Minimum 1.5GB free memory required to start a job
 const JOB_COOLDOWN_MS = 5000; // 5 second delay between jobs for memory to settle
 
-// Concurrency control - limit simultaneous processing jobs
-const MAX_CONCURRENT_JOBS = 1;
-let activeJobs = 0;
-let lastJobStartTime = 0;
+// Concurrency control - MUTEX-based to prevent race conditions
+// Only ONE job can run at a time
 const JOB_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes max per job
-const waitingQueue: Array<{ resolve: () => void; reject: (err: Error) => void }> = [];
 
-// Safety: reset stuck jobs (in case a job crashes without releasing)
-function checkAndResetStuckJobs() {
-  if (activeJobs > 0 && lastJobStartTime > 0) {
-    const elapsed = Date.now() - lastJobStartTime;
-    if (elapsed > JOB_TIMEOUT_MS) {
-      console.log(`[Concurrency] Resetting stuck jobs. activeJobs was ${activeJobs}, elapsed ${elapsed}ms`);
-      activeJobs = 0;
-      lastJobStartTime = 0;
-    }
-  }
-}
+// Mutex state
+let isJobRunning = false;
+let jobStartTime = 0;
+let lastJobEndTime = 0;
+let mutexQueue: Array<{
+  resolve: (result: { acquired: boolean; queuePosition?: number; reason?: string; memoryMB?: number }) => void;
+}> = [];
 
 // Check available system memory
 function getAvailableMemoryMB(): number {
@@ -43,12 +36,44 @@ function getAvailableMemoryMB(): number {
   return Math.floor(freeMem / (1024 * 1024));
 }
 
-// Track last job completion time for cooldown
-let lastJobEndTime = 0;
+// Safety: reset stuck job (in case a job crashes without releasing)
+function checkAndResetStuckJob() {
+  if (isJobRunning && jobStartTime > 0) {
+    const elapsed = Date.now() - jobStartTime;
+    if (elapsed > JOB_TIMEOUT_MS) {
+      console.log(`[Concurrency] Resetting stuck job. Elapsed ${elapsed}ms > ${JOB_TIMEOUT_MS}ms timeout`);
+      isJobRunning = false;
+      jobStartTime = 0;
+      // Process next in queue
+      processQueue();
+    }
+  }
+}
+
+// Process the mutex queue - grant lock to next waiter
+function processQueue() {
+  if (mutexQueue.length > 0 && !isJobRunning) {
+    const next = mutexQueue.shift();
+    if (next) {
+      // Check memory before granting
+      const availableMemory = getAvailableMemoryMB();
+      if (availableMemory < MIN_FREE_MEMORY_MB) {
+        next.resolve({ acquired: false, reason: "low_memory", memoryMB: availableMemory });
+        // Try next in queue
+        processQueue();
+        return;
+      }
+      isJobRunning = true;
+      jobStartTime = Date.now();
+      console.log(`[Concurrency] Job started (from queue). Memory: ${availableMemory}MB`);
+      next.resolve({ acquired: true });
+    }
+  }
+}
 
 async function acquireSlot(timeoutMs: number = 30000): Promise<{ acquired: boolean; queuePosition?: number; reason?: string; memoryMB?: number }> {
-  // Check for stuck jobs first
-  checkAndResetStuckJobs();
+  // Check for stuck job first
+  checkAndResetStuckJob();
 
   // Check cooldown period
   const timeSinceLastJob = Date.now() - lastJobEndTime;
@@ -58,7 +83,7 @@ async function acquireSlot(timeoutMs: number = 30000): Promise<{ acquired: boole
     await new Promise(resolve => setTimeout(resolve, waitTime));
   }
 
-  // Check available memory
+  // Check available memory first
   const availableMemory = getAvailableMemoryMB();
   console.log(`[Memory] Available: ${availableMemory}MB, Required: ${MIN_FREE_MEMORY_MB}MB`);
 
@@ -71,49 +96,45 @@ async function acquireSlot(timeoutMs: number = 30000): Promise<{ acquired: boole
     };
   }
 
-  if (activeJobs < MAX_CONCURRENT_JOBS) {
-    activeJobs++;
-    lastJobStartTime = Date.now();
+  // Try to acquire the mutex immediately
+  if (!isJobRunning) {
+    isJobRunning = true;
+    jobStartTime = Date.now();
+    console.log(`[Concurrency] Job started (immediate). Memory: ${availableMemory}MB`);
     return { acquired: true };
   }
 
-  // Queue position for feedback
-  const queuePosition = waitingQueue.length + 1;
+  // Job is running - queue this request
+  const queuePosition = mutexQueue.length + 1;
+  console.log(`[Concurrency] Job busy, queuing request at position ${queuePosition}`);
 
-  // Wait for a slot with timeout
   return new Promise((resolve) => {
-    const timeout = setTimeout(() => {
+    const timeoutHandle = setTimeout(() => {
       // Remove from queue on timeout
-      const idx = waitingQueue.findIndex(w => w.resolve === onSlotAvailable);
-      if (idx !== -1) waitingQueue.splice(idx, 1);
-      resolve({ acquired: false, queuePosition });
+      const idx = mutexQueue.findIndex(w => w.resolve === wrappedResolve);
+      if (idx !== -1) {
+        mutexQueue.splice(idx, 1);
+        console.log(`[Concurrency] Request timed out after ${timeoutMs}ms, removed from queue`);
+      }
+      resolve({ acquired: false, queuePosition, reason: "timeout" });
     }, timeoutMs);
 
-    const onSlotAvailable = () => {
-      clearTimeout(timeout);
-      activeJobs++;
-      resolve({ acquired: true });
+    const wrappedResolve = (result: { acquired: boolean; queuePosition?: number; reason?: string; memoryMB?: number }) => {
+      clearTimeout(timeoutHandle);
+      resolve(result);
     };
 
-    waitingQueue.push({
-      resolve: onSlotAvailable,
-      reject: () => {
-        clearTimeout(timeout);
-        resolve({ acquired: false, queuePosition });
-      }
-    });
+    mutexQueue.push({ resolve: wrappedResolve });
   });
 }
 
 function releaseSlot() {
-  activeJobs--;
+  isJobRunning = false;
+  jobStartTime = 0;
   lastJobEndTime = Date.now();
-  console.log(`[Memory] Job completed, cooldown started (${JOB_COOLDOWN_MS}ms)`);
-  // Wake up next waiting request
-  if (waitingQueue.length > 0 && activeJobs < MAX_CONCURRENT_JOBS) {
-    const next = waitingQueue.shift();
-    next?.resolve();
-  }
+  console.log(`[Concurrency] Job completed, cooldown started (${JOB_COOLDOWN_MS}ms). Queue length: ${mutexQueue.length}`);
+  // Process next in queue after a microtask (ensures state is consistent)
+  queueMicrotask(() => processQueue());
 }
 
 // Types
@@ -501,14 +522,14 @@ async function prepareCsvFile(filePath: string, fileName: string): Promise<{ csv
 
 // Status endpoint - check server capacity before uploading
 export async function GET() {
-  // Check for stuck jobs before reporting status
-  checkAndResetStuckJobs();
+  // Check for stuck job before reporting status
+  checkAndResetStuckJob();
 
   return NextResponse.json({
-    activeJobs,
-    maxJobs: MAX_CONCURRENT_JOBS,
-    queueLength: waitingQueue.length,
-    available: activeJobs < MAX_CONCURRENT_JOBS
+    activeJobs: isJobRunning ? 1 : 0,
+    maxJobs: 1,
+    queueLength: mutexQueue.length,
+    available: !isJobRunning
   });
 }
 
@@ -531,10 +552,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         error: "Server is busy processing other files. Please try again in a few minutes.",
-        reason: "busy",
+        reason: slot.reason || "busy",
         queuePosition: slot.queuePosition,
-        activeJobs: activeJobs,
-        maxJobs: MAX_CONCURRENT_JOBS
+        activeJobs: 1,
+        maxJobs: 1
       },
       { status: 503, headers: { "Retry-After": "60" } }
     );
