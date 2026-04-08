@@ -28,7 +28,7 @@ function getFriendlyErrorMessage(error: unknown): string {
 
   // JavaScript runtime errors
   if (message.includes("Invalid string length")) {
-    return "This file is too large for your browser to process. Try compressing it as a ZIP file, or split it into smaller files.";
+    return "This file is too large for your browser to process. Please split it into smaller files (under 500MB each).";
   }
   if (message.includes("out of memory") || message.includes("Out of memory")) {
     return "Your browser ran out of memory processing this file. Try closing other tabs or using a smaller file.";
