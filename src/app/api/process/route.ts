@@ -299,12 +299,34 @@ async function convertXlsxToCsv(xlsxPath: string, csvPath: string): Promise<void
   }
 }
 
-// Parse CSV file using streaming (handles files larger than V8 string limit)
-async function parseCsvFile(filePath: string): Promise<Record<string, unknown>[]> {
+// Stream CSV directly to SQLite - NO in-memory accumulation
+// This is critical for large files (millions of rows)
+async function streamCsvToSqlite(
+  filePath: string,
+  db: Database.Database,
+  tableName: "records_a" | "records_b",
+  mapping: ColumnMapping,
+  timezoneOffsetHours: number
+): Promise<number> {
   const { createReadStream } = await import("fs");
 
+  const insertStmt = db.prepare(`
+    INSERT INTO ${tableName} (a_number, b_number, seize_time, answer_time, end_time, billed_duration, rate, lrn, raw_index)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  // Batch insert for performance
+  const BATCH_SIZE = 5000;
+  let batch: unknown[][] = [];
+  let rowIndex = 0;
+
+  const insertBatch = db.transaction((rows: unknown[][]) => {
+    for (const row of rows) {
+      insertStmt.run(...row);
+    }
+  });
+
   return new Promise((resolve, reject) => {
-    const results: Record<string, unknown>[] = [];
     const fileStream = createReadStream(filePath, { encoding: "utf-8" });
 
     Papa.parse(fileStream, {
@@ -312,10 +334,35 @@ async function parseCsvFile(filePath: string): Promise<Record<string, unknown>[]
       skipEmptyLines: true,
       dynamicTyping: true,
       chunk: (chunk: Papa.ParseResult<Record<string, unknown>>) => {
-        results.push(...chunk.data);
+        for (const row of chunk.data) {
+          // Transform row to insert values
+          const values = [
+            normalizePhoneNumber(row[mapping.a_number!] as string | number | null),
+            normalizePhoneNumber(row[mapping.b_number!] as string | number | null),
+            getTimestampFromRow(row, mapping.seize_time, mapping.seize_time_alt, timezoneOffsetHours),
+            getTimestampFromRow(row, mapping.answer_time ?? null, mapping.answer_time_alt, timezoneOffsetHours),
+            getTimestampFromRow(row, mapping.end_time ?? null, mapping.end_time_alt, timezoneOffsetHours),
+            normalizeDuration(row[mapping.billed_duration!] as string | number | null),
+            mapping.rate ? normalizeRate(row[mapping.rate] as string | number | null) : 0,
+            normalizePhoneNumber(row[mapping.lrn!] as string | number | null),
+            rowIndex,
+          ];
+          batch.push(values);
+          rowIndex++;
+
+          // Insert batch when full
+          if (batch.length >= BATCH_SIZE) {
+            insertBatch(batch);
+            batch = [];
+          }
+        }
       },
       complete: () => {
-        resolve(results);
+        // Insert remaining rows
+        if (batch.length > 0) {
+          insertBatch(batch);
+        }
+        resolve(rowIndex);
       },
       error: (error: Error) => {
         reject(error);
@@ -327,39 +374,37 @@ async function parseCsvFile(filePath: string): Promise<Record<string, unknown>[]
 // Maximum decompressed size (2GB)
 const MAX_DECOMPRESSED_SIZE = 2 * 1024 * 1024 * 1024;
 
-// Parse file based on extension
-async function parseFile(filePath: string, fileName: string): Promise<Record<string, unknown>[]> {
+// Get CSV path for any supported file type (extracts/converts as needed)
+async function prepareCsvFile(filePath: string, fileName: string): Promise<{ csvPath: string; cleanup: () => Promise<void> }> {
   const ext = path.extname(fileName).toLowerCase();
+  const tempFiles: string[] = [];
+
+  const cleanup = async () => {
+    for (const f of tempFiles) {
+      await unlink(f).catch(() => {});
+    }
+  };
 
   if (ext === ".csv") {
-    return parseCsvFile(filePath);
+    return { csvPath: filePath, cleanup: async () => {} };
   }
 
   if (ext === ".xlsx" || ext === ".xls") {
-    // Convert XLSX to CSV first (much more memory efficient)
     const csvPath = filePath + ".converted.csv";
+    tempFiles.push(csvPath);
     console.log(`Converting XLSX to CSV: ${fileName}`);
-
-    try {
-      await convertXlsxToCsv(filePath, csvPath);
-      console.log(`Conversion complete, parsing CSV...`);
-      const data = await parseCsvFile(csvPath);
-      return data;
-    } finally {
-      // Clean up converted CSV
-      await unlink(csvPath).catch(() => {});
-    }
+    await convertXlsxToCsv(filePath, csvPath);
+    console.log(`Conversion complete`);
+    return { csvPath, cleanup };
   }
 
   if (ext === ".zip") {
     const buffer = await readFile(filePath);
     const zip = await JSZip.loadAsync(buffer);
 
-    // Find supported files in the ZIP (CSV or XLSX)
     const supportedExtensions = [".csv", ".xlsx", ".xls"];
     const entries = Object.keys(zip.files).filter((name) => {
       const lower = name.toLowerCase();
-      // Skip directories and macOS metadata files
       if (zip.files[name].dir || lower.includes("__macosx") || lower.startsWith(".")) {
         return false;
       }
@@ -370,7 +415,6 @@ async function parseFile(filePath: string, fileName: string): Promise<Record<str
       throw new Error("No CSV or XLSX files found in ZIP archive");
     }
 
-    // Sort to prefer CSV, then XLSX
     entries.sort((a, b) => {
       const aIsCSV = a.toLowerCase().endsWith(".csv");
       const bIsCSV = b.toLowerCase().endsWith(".csv");
@@ -383,66 +427,37 @@ async function parseFile(filePath: string, fileName: string): Promise<Record<str
     const entry = zip.files[entryName];
     const entryExt = path.extname(entryName).toLowerCase();
 
-    // Check decompressed size before extracting
+    // Check decompressed size
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const uncompressedSize = (entry as any)._data?.uncompressedSize;
     if (uncompressedSize && uncompressedSize > MAX_DECOMPRESSED_SIZE) {
       throw new Error(`Decompressed file size (${Math.round(uncompressedSize / 1024 / 1024)}MB) exceeds maximum allowed (${MAX_DECOMPRESSED_SIZE / 1024 / 1024}MB)`);
     }
 
+    const extractedPath = filePath + ".extracted" + entryExt;
+    tempFiles.push(extractedPath);
+    const contentBuffer = await entry.async("nodebuffer");
+    await writeFile(extractedPath, contentBuffer);
+
     if (entryExt === ".csv") {
-      // MEMORY FIX: Extract CSV to disk first to avoid "Invalid string length" error
-      // JSZip's async("string") uses Array.join() internally which fails for large files
-      const csvBuffer = await entry.async("nodebuffer");
-      const tempCsvPath = filePath + ".extracted.csv";
-      await writeFile(tempCsvPath, csvBuffer);
-
-      try {
-        const data = await parseCsvFile(tempCsvPath);
-        return data;
-      } finally {
-        await unlink(tempCsvPath).catch(() => {});
-      }
+      return { csvPath: extractedPath, cleanup };
     }
 
-    if (entryExt === ".xlsx" || entryExt === ".xls") {
-      // Extract XLSX to temp file, then convert to CSV
-      const xlsxBuffer = await entry.async("nodebuffer");
-      const tempXlsxPath = filePath + ".extracted.xlsx";
-      const tempCsvPath = filePath + ".extracted.csv";
-      await writeFile(tempXlsxPath, xlsxBuffer);
-
-      try {
-        console.log(`Converting extracted XLSX to CSV: ${entryName}`);
-        await convertXlsxToCsv(tempXlsxPath, tempCsvPath);
-        console.log(`Conversion complete, parsing CSV...`);
-        const data = await parseCsvFile(tempCsvPath);
-        return data;
-      } finally {
-        // Clean up temp files
-        await unlink(tempXlsxPath).catch(() => {});
-        await unlink(tempCsvPath).catch(() => {});
-      }
-    }
+    // XLSX inside ZIP - need another conversion
+    const csvPath = filePath + ".extracted.csv";
+    tempFiles.push(csvPath);
+    console.log(`Converting extracted XLSX to CSV: ${entryName}`);
+    await convertXlsxToCsv(extractedPath, csvPath);
+    console.log(`Conversion complete`);
+    return { csvPath, cleanup };
   }
 
   if (ext === ".gz") {
-    // Get the inner filename by removing .gz extension
     const innerName = fileName.replace(/\.gz$/i, "");
     const innerExt = path.extname(innerName).toLowerCase();
 
-    // Check decompressed size from gzip footer (last 4 bytes = ISIZE)
-    // Note: This is mod 2^32, so only accurate for files < 4GB
+    // Decompress
     const compressedBuffer = await readFile(filePath);
-    if (compressedBuffer.length >= 4) {
-      const isize = compressedBuffer.readUInt32LE(compressedBuffer.length - 4);
-      // Only trust this value if it seems reasonable (not 0 and less than 4GB indicator)
-      if (isize > 0 && isize > MAX_DECOMPRESSED_SIZE) {
-        throw new Error(`Decompressed file size (~${Math.round(isize / 1024 / 1024)}MB) exceeds maximum allowed (${MAX_DECOMPRESSED_SIZE / 1024 / 1024}MB)`);
-      }
-    }
-
-    // Decompress gzip file with size limit enforcement
     const decompressedBuffer = await new Promise<Buffer>((resolve, reject) => {
       const chunks: Buffer[] = [];
       let totalSize = 0;
@@ -463,36 +478,21 @@ async function parseFile(filePath: string, fileName: string): Promise<Record<str
         .on("error", reject);
     });
 
-    if (innerExt === ".csv" || innerExt === "") {
-      // MEMORY FIX: Write to temp file to avoid "Invalid string length" error
-      // Buffer.toString() fails for files > ~512MB due to V8 string length limit
-      const tempCsvPath = filePath + ".decompressed.csv";
-      await writeFile(tempCsvPath, decompressedBuffer);
+    const decompressedPath = filePath + ".decompressed" + (innerExt || ".csv");
+    tempFiles.push(decompressedPath);
+    await writeFile(decompressedPath, decompressedBuffer);
 
-      try {
-        const data = await parseCsvFile(tempCsvPath);
-        return data;
-      } finally {
-        await unlink(tempCsvPath).catch(() => {});
-      }
+    if (innerExt === ".csv" || innerExt === "") {
+      return { csvPath: decompressedPath, cleanup };
     }
 
     if (innerExt === ".xlsx" || innerExt === ".xls") {
-      // Write decompressed XLSX to temp file, then convert to CSV
-      const tempXlsxPath = filePath + ".decompressed.xlsx";
-      const tempCsvPath = filePath + ".decompressed.csv";
-      await writeFile(tempXlsxPath, decompressedBuffer);
-
-      try {
-        console.log(`Converting decompressed XLSX to CSV: ${innerName}`);
-        await convertXlsxToCsv(tempXlsxPath, tempCsvPath);
-        console.log(`Conversion complete, parsing CSV...`);
-        const data = await parseCsvFile(tempCsvPath);
-        return data;
-      } finally {
-        await unlink(tempXlsxPath).catch(() => {});
-        await unlink(tempCsvPath).catch(() => {});
-      }
+      const csvPath = filePath + ".decompressed.csv";
+      tempFiles.push(csvPath);
+      console.log(`Converting decompressed XLSX to CSV: ${innerName}`);
+      await convertXlsxToCsv(decompressedPath, csvPath);
+      console.log(`Conversion complete`);
+      return { csvPath, cleanup };
     }
   }
 
@@ -669,26 +669,7 @@ export async function POST(request: NextRequest) {
     await writeFile(fileAPath, bufferA);
     await writeFile(fileBPath, bufferB);
 
-    // Parse files
-    console.log(`Parsing file A: ${fileA.name}`);
-    const dataA = await parseFile(fileAPath, fileA.name);
-    console.log(`Parsed ${dataA.length} rows from file A`);
-
-    console.log(`Parsing file B: ${fileB.name}`);
-    const dataB = await parseFile(fileBPath, fileB.name);
-    console.log(`Parsed ${dataB.length} rows from file B`);
-
-    if (!dataA.length || !dataB.length) {
-      await cleanup();
-      releaseSlot();
-      return NextResponse.json({ error: "One or both files contain no data" }, { status: 400 });
-    }
-
-    // No row limit - RAM is the natural constraint
-    // Memory check at job start will reject if insufficient
-    console.log(`Processing ${dataA.length.toLocaleString()} + ${dataB.length.toLocaleString()} = ${(dataA.length + dataB.length).toLocaleString()} total rows`);
-
-    // Create SQLite database
+    // Create SQLite database FIRST (before parsing)
     db = new Database(dbPath);
     db.pragma("journal_mode = WAL");
     db.pragma("synchronous = OFF"); // Faster for temp data
@@ -723,66 +704,35 @@ export async function POST(request: NextRequest) {
       );
     `);
 
-    // Prepare insert statements
-    const insertA = db.prepare(`
-      INSERT INTO records_a (a_number, b_number, seize_time, answer_time, end_time, billed_duration, rate, lrn, raw_index)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
+    // MEMORY-EFFICIENT: Stream parse files directly to SQLite
+    // No in-memory accumulation - handles millions of rows without OOM
+    console.log(`Streaming file A to SQLite: ${fileA.name}`);
+    const prepA = await prepareCsvFile(fileAPath, fileA.name);
+    let rowCountA: number;
+    try {
+      rowCountA = await streamCsvToSqlite(prepA.csvPath, db, "records_a", mappingA, timezoneOffsetA);
+    } finally {
+      await prepA.cleanup();
+    }
+    console.log(`Inserted ${rowCountA.toLocaleString()} rows from file A`);
 
-    const insertB = db.prepare(`
-      INSERT INTO records_b (a_number, b_number, seize_time, answer_time, end_time, billed_duration, rate, lrn, raw_index)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
+    console.log(`Streaming file B to SQLite: ${fileB.name}`);
+    const prepB = await prepareCsvFile(fileBPath, fileB.name);
+    let rowCountB: number;
+    try {
+      rowCountB = await streamCsvToSqlite(prepB.csvPath, db, "records_b", mappingB, timezoneOffsetB);
+    } finally {
+      await prepB.cleanup();
+    }
+    console.log(`Inserted ${rowCountB.toLocaleString()} rows from file B`);
 
-    // Batch insert File A records
-    const BATCH_SIZE = 10000;
-
-    const insertBatchA = db.transaction((rows: Record<string, unknown>[], startIndex: number) => {
-      for (let i = 0; i < rows.length; i++) {
-        const row = rows[i];
-        insertA.run(
-          normalizePhoneNumber(row[mappingA.a_number!] as string | number | null),
-          normalizePhoneNumber(row[mappingA.b_number!] as string | number | null),
-          getTimestampFromRow(row, mappingA.seize_time, mappingA.seize_time_alt, timezoneOffsetA),
-          getTimestampFromRow(row, mappingA.answer_time ?? null, mappingA.answer_time_alt, timezoneOffsetA),
-          getTimestampFromRow(row, mappingA.end_time ?? null, mappingA.end_time_alt, timezoneOffsetA),
-          normalizeDuration(row[mappingA.billed_duration!] as string | number | null),
-          mappingA.rate ? normalizeRate(row[mappingA.rate] as string | number | null) : 0,
-          normalizePhoneNumber(row[mappingA.lrn!] as string | number | null),
-          startIndex + i
-        );
-      }
-    });
-
-    const insertBatchB = db.transaction((rows: Record<string, unknown>[], startIndex: number) => {
-      for (let i = 0; i < rows.length; i++) {
-        const row = rows[i];
-        insertB.run(
-          normalizePhoneNumber(row[mappingB.a_number!] as string | number | null),
-          normalizePhoneNumber(row[mappingB.b_number!] as string | number | null),
-          getTimestampFromRow(row, mappingB.seize_time, mappingB.seize_time_alt, timezoneOffsetB),
-          getTimestampFromRow(row, mappingB.answer_time ?? null, mappingB.answer_time_alt, timezoneOffsetB),
-          getTimestampFromRow(row, mappingB.end_time ?? null, mappingB.end_time_alt, timezoneOffsetB),
-          normalizeDuration(row[mappingB.billed_duration!] as string | number | null),
-          mappingB.rate ? normalizeRate(row[mappingB.rate] as string | number | null) : 0,
-          normalizePhoneNumber(row[mappingB.lrn!] as string | number | null),
-          startIndex + i
-        );
-      }
-    });
-
-    // Insert in batches
-    console.log("Inserting file A records...");
-    for (let i = 0; i < dataA.length; i += BATCH_SIZE) {
-      const batch = dataA.slice(i, i + BATCH_SIZE);
-      insertBatchA(batch, i);
+    if (!rowCountA || !rowCountB) {
+      await cleanup();
+      releaseSlot();
+      return NextResponse.json({ error: "One or both files contain no data" }, { status: 400 });
     }
 
-    console.log("Inserting file B records...");
-    for (let i = 0; i < dataB.length; i += BATCH_SIZE) {
-      const batch = dataB.slice(i, i + BATCH_SIZE);
-      insertBatchB(batch, i);
-    }
+    console.log(`Processing ${rowCountA.toLocaleString()} + ${rowCountB.toLocaleString()} = ${(rowCountA + rowCountB).toLocaleString()} total rows`);
 
     // Create indexes after bulk insert (faster)
     console.log("Creating indexes...");
@@ -1339,8 +1289,8 @@ export async function POST(request: NextRequest) {
 
     // Calculate summary
     const summary = {
-      totalRecordsA: dataA.length,
-      totalRecordsB: dataB.length,
+      totalRecordsA: rowCountA,
+      totalRecordsB: rowCountB,
       matchedRecords: matchedRecordsCount,
       // TOTAL BILLED - key numbers for invoice comparison
       yourTotalBilled: Math.round(yourTotalBilled * 100) / 100,
