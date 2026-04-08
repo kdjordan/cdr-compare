@@ -22,6 +22,54 @@ import { parseFile } from "@/lib/parser";
 import { ColumnMappingModal } from "@/components/mapping/ColumnMappingModal";
 import { ScreenshotShowcase } from "@/components/home/ScreenshotShowcase";
 
+// Translate cryptic error messages into user-friendly ones
+function getFriendlyErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+
+  // JavaScript runtime errors
+  if (message.includes("Invalid string length")) {
+    return "This file is too large for your browser to process. Try compressing it as a ZIP file, or split it into smaller files.";
+  }
+  if (message.includes("out of memory") || message.includes("Out of memory")) {
+    return "Your browser ran out of memory processing this file. Try closing other tabs or using a smaller file.";
+  }
+  if (message.includes("Failed to fetch") || message.includes("NetworkError")) {
+    return "Network error. Please check your internet connection and try again.";
+  }
+  if (message.includes("aborted") || message.includes("ECONNRESET")) {
+    return "The connection was interrupted. This may happen with large files on slow connections. Please try again.";
+  }
+
+  // File parsing errors
+  if (message.includes("Unsupported file format")) {
+    return "This file type isn't supported. Please upload a CSV, XLSX, ZIP, or GZ file.";
+  }
+  if (message.includes("Empty spreadsheet") || message.includes("no data")) {
+    return "This file appears to be empty. Please check the file and try again.";
+  }
+  if (message.includes("No CSV or XLSX files found")) {
+    return "No CDR files found in this ZIP archive. Make sure it contains CSV or XLSX files.";
+  }
+
+  // Server errors
+  if (message.includes("Bad Gateway") || message.includes("502")) {
+    return "The server is temporarily unavailable. Please wait a moment and try again.";
+  }
+  if (message.includes("Server memory is low")) {
+    return message; // Already user-friendly
+  }
+  if (message.includes("Server is busy")) {
+    return message; // Already user-friendly
+  }
+
+  // Default: return original if it seems user-friendly, otherwise generic message
+  if (message.length < 100 && !message.includes("at ") && !message.includes("Error:")) {
+    return message;
+  }
+
+  return "Something went wrong processing your file. Please try again or contact support if the problem persists.";
+}
+
 type UploadStep = "file_a" | "mapping_a" | "file_b" | "mapping_b" | "ready";
 
 export default function Home() {
@@ -110,7 +158,7 @@ export default function Home() {
       setStep("mapping_a");
     } catch (err) {
       console.error("[Page] Parse error:", err);
-      setError(err instanceof Error ? err.message : "Failed to parse file");
+      setError(getFriendlyErrorMessage(err));
       setLocalFileA(null);
     } finally {
       setIsProcessing(false);
@@ -140,7 +188,8 @@ export default function Home() {
       });
       setStep("mapping_b");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to parse file");
+      console.error("[Page] Parse error:", err);
+      setError(getFriendlyErrorMessage(err));
       setLocalFileB(null);
     } finally {
       setIsProcessing(false);

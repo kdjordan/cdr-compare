@@ -6,6 +6,48 @@ import { motion } from "framer-motion";
 import { Database, Loader2, CheckCircle, AlertCircle, Users, RefreshCw } from "lucide-react";
 import { useReconciliation, ReconciliationResults } from "@/context/ReconciliationContext";
 
+// Translate cryptic error messages into user-friendly ones
+function getFriendlyErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+
+  // Network/connection errors
+  if (message.includes("Failed to fetch") || message.includes("NetworkError")) {
+    return "Network error. Please check your internet connection and try again.";
+  }
+  if (message.includes("aborted") || message.includes("ECONNRESET")) {
+    return "The upload was interrupted. This can happen with large files on slow connections. Please try again.";
+  }
+  if (message.includes("Bad Gateway") || message.includes("502")) {
+    return "The server is temporarily unavailable. Please wait a moment and try again.";
+  }
+  if (message.includes("timeout") || message.includes("Timeout")) {
+    return "The request timed out. This can happen with very large files. Please try again.";
+  }
+
+  // Server errors (already user-friendly)
+  if (message.includes("Server memory is low") || message.includes("Server is busy")) {
+    return message;
+  }
+
+  // File errors
+  if (message.includes("File size exceeds")) {
+    return message;
+  }
+  if (message.includes("Invalid file type")) {
+    return "This file type isn't supported. Please upload CSV, XLSX, ZIP, or GZ files.";
+  }
+  if (message.includes("no data") || message.includes("empty")) {
+    return "One or both files appear to be empty. Please check your files and try again.";
+  }
+
+  // Default: return original if it seems user-friendly, otherwise generic message
+  if (message.length < 150 && !message.includes("at ") && !message.includes("Error:")) {
+    return message;
+  }
+
+  return "Something went wrong during processing. Please try again or contact support if the problem persists.";
+}
+
 const PROCESSING_STEPS = [
   { id: "uploading", label: "Uploading files" },
   { id: "processing", label: "Processing CDRs" },
@@ -112,7 +154,7 @@ export default function ProcessingPage() {
         }, 1000);
       } catch (err) {
         console.error("Processing error:", err);
-        setError(err instanceof Error ? err.message : "An unexpected error occurred");
+        setError(getFriendlyErrorMessage(err));
       }
     };
 
