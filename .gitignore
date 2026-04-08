@@ -46,3 +46,6 @@ next-env.d.ts
 # metrics data
 /data
 .gstack/
+
+# test data (can be large CDR files)
+/test-data

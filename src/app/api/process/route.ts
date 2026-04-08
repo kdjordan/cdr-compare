@@ -299,16 +299,29 @@ async function convertXlsxToCsv(xlsxPath: string, csvPath: string): Promise<void
   }
 }
 
-// Parse CSV file (memory efficient with PapaParse)
+// Parse CSV file using streaming (handles files larger than V8 string limit)
 async function parseCsvFile(filePath: string): Promise<Record<string, unknown>[]> {
-  const buffer = await readFile(filePath);
-  const text = buffer.toString("utf-8");
-  const result = Papa.parse(text, {
-    header: true,
-    skipEmptyLines: true,
-    dynamicTyping: true,
+  const { createReadStream } = await import("fs");
+
+  return new Promise((resolve, reject) => {
+    const results: Record<string, unknown>[] = [];
+    const fileStream = createReadStream(filePath, { encoding: "utf-8" });
+
+    Papa.parse(fileStream, {
+      header: true,
+      skipEmptyLines: true,
+      dynamicTyping: true,
+      chunk: (chunk: Papa.ParseResult<Record<string, unknown>>) => {
+        results.push(...chunk.data);
+      },
+      complete: () => {
+        resolve(results);
+      },
+      error: (error: Error) => {
+        reject(error);
+      },
+    });
   });
-  return result.data as Record<string, unknown>[];
 }
 
 // Maximum decompressed size (2GB)
@@ -378,13 +391,18 @@ async function parseFile(filePath: string, fileName: string): Promise<Record<str
     }
 
     if (entryExt === ".csv") {
-      const csvText = await entry.async("string");
-      const result = Papa.parse(csvText, {
-        header: true,
-        skipEmptyLines: true,
-        dynamicTyping: true,
-      });
-      return result.data as Record<string, unknown>[];
+      // MEMORY FIX: Extract CSV to disk first to avoid "Invalid string length" error
+      // JSZip's async("string") uses Array.join() internally which fails for large files
+      const csvBuffer = await entry.async("nodebuffer");
+      const tempCsvPath = filePath + ".extracted.csv";
+      await writeFile(tempCsvPath, csvBuffer);
+
+      try {
+        const data = await parseCsvFile(tempCsvPath);
+        return data;
+      } finally {
+        await unlink(tempCsvPath).catch(() => {});
+      }
     }
 
     if (entryExt === ".xlsx" || entryExt === ".xls") {
@@ -446,14 +464,17 @@ async function parseFile(filePath: string, fileName: string): Promise<Record<str
     });
 
     if (innerExt === ".csv" || innerExt === "") {
-      // Parse as CSV (default if no inner extension)
-      const csvText = decompressedBuffer.toString("utf-8");
-      const result = Papa.parse(csvText, {
-        header: true,
-        skipEmptyLines: true,
-        dynamicTyping: true,
-      });
-      return result.data as Record<string, unknown>[];
+      // MEMORY FIX: Write to temp file to avoid "Invalid string length" error
+      // Buffer.toString() fails for files > ~512MB due to V8 string length limit
+      const tempCsvPath = filePath + ".decompressed.csv";
+      await writeFile(tempCsvPath, decompressedBuffer);
+
+      try {
+        const data = await parseCsvFile(tempCsvPath);
+        return data;
+      } finally {
+        await unlink(tempCsvPath).catch(() => {});
+      }
     }
 
     if (innerExt === ".xlsx" || innerExt === ".xls") {
