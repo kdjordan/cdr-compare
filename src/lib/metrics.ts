@@ -1,12 +1,17 @@
 import Database from "better-sqlite3";
-import { mkdirSync, existsSync } from "fs";
+import { mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync } from "fs";
 import path from "path";
 
 // CRITICAL: Use absolute path to ensure all workers/processes use the SAME database file
-// Relative paths can resolve differently depending on worker's current directory
+// In Docker/Coolify, the app runs from /app, and /app/data is the persistent volume
 const METRICS_DB_PATH = process.env.METRICS_DB_PATH || path.resolve(process.cwd(), "data", "metrics.db");
 
+// SIMPLE FILE-BASED LOCK - more reliable than SQLite for cross-container locking
+// SQLite locks work within a single container but can have issues during rolling updates
+const LOCK_FILE_PATH = path.resolve(process.cwd(), "data", ".job.lock");
+
 console.log(`[Metrics] Database path: ${METRICS_DB_PATH}`);
+console.log(`[Metrics] Lock file path: ${LOCK_FILE_PATH}`);
 
 let db: Database.Database | null = null;
 
@@ -89,10 +94,22 @@ export function getMetrics(): Metrics {
 }
 
 // ============================================
-// JOB LOCK - Cross-container concurrency control
+// JOB LOCK - Simple file-based cross-container mutex
 // ============================================
+//
+// We use a simple lock FILE instead of SQLite because:
+// 1. File creation with 'wx' flag is truly atomic across processes
+// 2. Works reliably during Coolify rolling updates (both containers share the volume)
+// 3. No complex transaction isolation issues
+// 4. The lock file is on the persistent volume (/app/data)
 
 const JOB_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes max per job
+
+interface LockFileContent {
+  jobId: string;
+  startedAt: number;
+  pid: number;
+}
 
 export interface LockResult {
   acquired: boolean;
@@ -102,74 +119,75 @@ export interface LockResult {
 }
 
 /**
- * Try to acquire the job lock atomically using SQLite.
- * Uses EXCLUSIVE transaction to prevent any race conditions.
- * Returns true if lock was acquired, false if another job is running.
+ * Try to acquire the job lock using atomic file creation.
+ * The 'wx' flag creates the file ONLY if it doesn't exist - atomic across processes.
  */
 export function tryAcquireJobLock(jobId: string): LockResult {
-  // IMPORTANT: Open a FRESH database connection for lock operations
-  // This ensures we see the latest state, not a cached view
-  const lockDb = new Database(METRICS_DB_PATH);
+  const now = Date.now();
 
   try {
-    // Ensure the lock table exists (in case this runs before getDb())
-    lockDb.exec(`
-      CREATE TABLE IF NOT EXISTS job_lock (
-        id INTEGER PRIMARY KEY CHECK (id = 1),
-        job_id TEXT,
-        started_at INTEGER,
-        is_locked INTEGER NOT NULL DEFAULT 0
-      );
-      INSERT OR IGNORE INTO job_lock (id, is_locked) VALUES (1, 0);
-    `);
+    // First check if there's a stale lock to clean up
+    if (existsSync(LOCK_FILE_PATH)) {
+      try {
+        const content = readFileSync(LOCK_FILE_PATH, "utf-8");
+        const lockInfo: LockFileContent = JSON.parse(content);
+        const elapsed = now - lockInfo.startedAt;
 
-    const now = Date.now();
-
-    // Use an EXCLUSIVE transaction to ensure complete isolation
-    // This blocks ALL other database access until we're done
-    const acquireLock = lockDb.transaction(() => {
-      // Clear stale lock if exists
-      lockDb.prepare(`
-        UPDATE job_lock
-        SET is_locked = 0, job_id = NULL, started_at = NULL
-        WHERE id = 1 AND is_locked = 1 AND (? - started_at) > ?
-      `).run(now, JOB_TIMEOUT_MS);
-
-      // Try to acquire - only succeeds if is_locked = 0
-      const result = lockDb.prepare(`
-        UPDATE job_lock
-        SET is_locked = 1, job_id = ?, started_at = ?
-        WHERE id = 1 AND is_locked = 0
-      `).run(jobId, now);
-
-      return result.changes > 0;
-    });
-
-    // Execute with EXCLUSIVE isolation
-    const acquired = acquireLock.exclusive();
-
-    if (acquired) {
-      console.log(`[DB Lock] Job ${jobId} ACQUIRED lock`);
-      lockDb.close();
-      return { acquired: true };
+        if (elapsed > JOB_TIMEOUT_MS) {
+          // Lock is stale - remove it
+          console.log(`[File Lock] Removing stale lock (${Math.round(elapsed / 1000)}s old, job ${lockInfo.jobId})`);
+          unlinkSync(LOCK_FILE_PATH);
+        } else {
+          // Lock is valid - reject
+          console.log(`[File Lock] Job ${jobId} REJECTED - lock held by ${lockInfo.jobId} (${Math.round(elapsed / 1000)}s ago)`);
+          return {
+            acquired: false,
+            reason: "busy",
+            currentJobId: lockInfo.jobId,
+            startedAt: lockInfo.startedAt
+          };
+        }
+      } catch (parseErr) {
+        // Lock file is corrupted - remove it
+        console.log(`[File Lock] Removing corrupted lock file`);
+        try { unlinkSync(LOCK_FILE_PATH); } catch { /* ignore */ }
+      }
     }
 
-    // Lock is held by another job - get details
-    const current = lockDb.prepare(`
-      SELECT job_id, started_at FROM job_lock WHERE id = 1
-    `).get() as { job_id: string; started_at: number } | undefined;
-
-    console.log(`[DB Lock] Job ${jobId} REJECTED - lock held by ${current?.job_id}`);
-    lockDb.close();
-    return {
-      acquired: false,
-      reason: "busy",
-      currentJobId: current?.job_id,
-      startedAt: current?.started_at
+    // Try to create lock file atomically
+    // 'wx' flag = write + exclusive (fails if file exists)
+    const lockContent: LockFileContent = {
+      jobId,
+      startedAt: now,
+      pid: process.pid
     };
-  } catch (error) {
-    console.error(`[DB Lock] Error acquiring lock:`, error);
-    lockDb.close();
+
+    writeFileSync(LOCK_FILE_PATH, JSON.stringify(lockContent), { flag: "wx" });
+    console.log(`[File Lock] Job ${jobId} ACQUIRED lock (pid ${process.pid})`);
+    return { acquired: true };
+
+  } catch (error: unknown) {
+    // EEXIST means another process created the file between our check and write
+    // This is the atomic race condition protection working correctly
+    if (error && typeof error === "object" && "code" in error && error.code === "EEXIST") {
+      // Read who has the lock
+      try {
+        const content = readFileSync(LOCK_FILE_PATH, "utf-8");
+        const lockInfo: LockFileContent = JSON.parse(content);
+        console.log(`[File Lock] Job ${jobId} REJECTED (race) - lock held by ${lockInfo.jobId}`);
+        return {
+          acquired: false,
+          reason: "busy",
+          currentJobId: lockInfo.jobId,
+          startedAt: lockInfo.startedAt
+        };
+      } catch {
+        console.log(`[File Lock] Job ${jobId} REJECTED - lock exists but unreadable`);
+        return { acquired: false, reason: "busy" };
+      }
+    }
+
+    console.error(`[File Lock] Error acquiring lock:`, error);
     return { acquired: false, reason: "error" };
   }
 }
@@ -178,25 +196,25 @@ export function tryAcquireJobLock(jobId: string): LockResult {
  * Release the job lock. Only releases if the lock belongs to this job.
  */
 export function releaseJobLock(jobId: string): void {
-  // Use fresh connection to ensure we see/modify the actual state
-  const lockDb = new Database(METRICS_DB_PATH);
-
   try {
-    const result = lockDb.prepare(`
-      UPDATE job_lock
-      SET is_locked = 0, job_id = NULL, started_at = NULL
-      WHERE id = 1 AND job_id = ?
-    `).run(jobId);
+    if (!existsSync(LOCK_FILE_PATH)) {
+      console.log(`[File Lock] No lock file to release`);
+      return;
+    }
 
-    if (result.changes > 0) {
-      console.log(`[DB Lock] Job ${jobId} RELEASED lock`);
+    const content = readFileSync(LOCK_FILE_PATH, "utf-8");
+    const lockInfo: LockFileContent = JSON.parse(content);
+
+    if (lockInfo.jobId === jobId) {
+      unlinkSync(LOCK_FILE_PATH);
+      console.log(`[File Lock] Job ${jobId} RELEASED lock`);
     } else {
-      console.log(`[DB Lock] Job ${jobId} did not hold the lock`);
+      console.log(`[File Lock] Job ${jobId} cannot release - lock held by ${lockInfo.jobId}`);
     }
   } catch (error) {
-    console.error(`[DB Lock] Error releasing lock:`, error);
-  } finally {
-    lockDb.close();
+    console.error(`[File Lock] Error releasing lock:`, error);
+    // Try to remove anyway to avoid stuck state
+    try { unlinkSync(LOCK_FILE_PATH); } catch { /* ignore */ }
   }
 }
 
@@ -204,30 +222,22 @@ export function releaseJobLock(jobId: string): void {
  * Check if the job lock is currently held (for status endpoint).
  */
 export function isJobLockHeld(): boolean {
-  // Use fresh connection to see current state
-  const lockDb = new Database(METRICS_DB_PATH);
-
   try {
-    const now = Date.now();
-
-    const row = lockDb.prepare(`
-      SELECT is_locked, started_at FROM job_lock WHERE id = 1
-    `).get() as { is_locked: number; started_at: number | null } | undefined;
-
-    if (!row || !row.is_locked) {
+    if (!existsSync(LOCK_FILE_PATH)) {
       return false;
     }
 
-    // Check if lock is stale
-    if (row.started_at && (now - row.started_at) > JOB_TIMEOUT_MS) {
+    const content = readFileSync(LOCK_FILE_PATH, "utf-8");
+    const lockInfo: LockFileContent = JSON.parse(content);
+    const elapsed = Date.now() - lockInfo.startedAt;
+
+    // Lock is stale if older than timeout
+    if (elapsed > JOB_TIMEOUT_MS) {
       return false;
     }
 
     return true;
-  } catch (error) {
-    console.error(`[DB Lock] Error checking lock:`, error);
+  } catch {
     return false;
-  } finally {
-    lockDb.close();
   }
 }
