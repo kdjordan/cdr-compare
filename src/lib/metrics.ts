@@ -2,7 +2,11 @@ import Database from "better-sqlite3";
 import { mkdirSync, existsSync } from "fs";
 import path from "path";
 
-const METRICS_DB_PATH = process.env.METRICS_DB_PATH || "./data/metrics.db";
+// CRITICAL: Use absolute path to ensure all workers/processes use the SAME database file
+// Relative paths can resolve differently depending on worker's current directory
+const METRICS_DB_PATH = process.env.METRICS_DB_PATH || path.resolve(process.cwd(), "data", "metrics.db");
+
+console.log(`[Metrics] Database path: ${METRICS_DB_PATH}`);
 
 let db: Database.Database | null = null;
 
@@ -108,6 +112,17 @@ export function tryAcquireJobLock(jobId: string): LockResult {
   const lockDb = new Database(METRICS_DB_PATH);
 
   try {
+    // Ensure the lock table exists (in case this runs before getDb())
+    lockDb.exec(`
+      CREATE TABLE IF NOT EXISTS job_lock (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        job_id TEXT,
+        started_at INTEGER,
+        is_locked INTEGER NOT NULL DEFAULT 0
+      );
+      INSERT OR IGNORE INTO job_lock (id, is_locked) VALUES (1, 0);
+    `);
+
     const now = Date.now();
 
     // Use an EXCLUSIVE transaction to ensure complete isolation
