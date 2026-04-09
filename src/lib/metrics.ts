@@ -99,39 +99,53 @@ export interface LockResult {
 
 /**
  * Try to acquire the job lock atomically using SQLite.
+ * Uses EXCLUSIVE transaction to prevent any race conditions.
  * Returns true if lock was acquired, false if another job is running.
  */
 export function tryAcquireJobLock(jobId: string): LockResult {
+  // IMPORTANT: Open a FRESH database connection for lock operations
+  // This ensures we see the latest state, not a cached view
+  const lockDb = new Database(METRICS_DB_PATH);
+
   try {
-    const database = getDb();
     const now = Date.now();
 
-    // First, check if there's a stale lock and clear it
-    database.prepare(`
-      UPDATE job_lock
-      SET is_locked = 0, job_id = NULL, started_at = NULL
-      WHERE id = 1 AND is_locked = 1 AND (? - started_at) > ?
-    `).run(now, JOB_TIMEOUT_MS);
+    // Use an EXCLUSIVE transaction to ensure complete isolation
+    // This blocks ALL other database access until we're done
+    const acquireLock = lockDb.transaction(() => {
+      // Clear stale lock if exists
+      lockDb.prepare(`
+        UPDATE job_lock
+        SET is_locked = 0, job_id = NULL, started_at = NULL
+        WHERE id = 1 AND is_locked = 1 AND (? - started_at) > ?
+      `).run(now, JOB_TIMEOUT_MS);
 
-    // Now try to acquire the lock atomically
-    // This UPDATE only succeeds if is_locked = 0
-    const result = database.prepare(`
-      UPDATE job_lock
-      SET is_locked = 1, job_id = ?, started_at = ?
-      WHERE id = 1 AND is_locked = 0
-    `).run(jobId, now);
+      // Try to acquire - only succeeds if is_locked = 0
+      const result = lockDb.prepare(`
+        UPDATE job_lock
+        SET is_locked = 1, job_id = ?, started_at = ?
+        WHERE id = 1 AND is_locked = 0
+      `).run(jobId, now);
 
-    if (result.changes > 0) {
+      return result.changes > 0;
+    });
+
+    // Execute with EXCLUSIVE isolation
+    const acquired = acquireLock.exclusive();
+
+    if (acquired) {
       console.log(`[DB Lock] Job ${jobId} ACQUIRED lock`);
+      lockDb.close();
       return { acquired: true };
     }
 
     // Lock is held by another job - get details
-    const current = database.prepare(`
+    const current = lockDb.prepare(`
       SELECT job_id, started_at FROM job_lock WHERE id = 1
     `).get() as { job_id: string; started_at: number } | undefined;
 
     console.log(`[DB Lock] Job ${jobId} REJECTED - lock held by ${current?.job_id}`);
+    lockDb.close();
     return {
       acquired: false,
       reason: "busy",
@@ -140,6 +154,7 @@ export function tryAcquireJobLock(jobId: string): LockResult {
     };
   } catch (error) {
     console.error(`[DB Lock] Error acquiring lock:`, error);
+    lockDb.close();
     return { acquired: false, reason: "error" };
   }
 }
@@ -148,10 +163,11 @@ export function tryAcquireJobLock(jobId: string): LockResult {
  * Release the job lock. Only releases if the lock belongs to this job.
  */
 export function releaseJobLock(jobId: string): void {
-  try {
-    const database = getDb();
+  // Use fresh connection to ensure we see/modify the actual state
+  const lockDb = new Database(METRICS_DB_PATH);
 
-    const result = database.prepare(`
+  try {
+    const result = lockDb.prepare(`
       UPDATE job_lock
       SET is_locked = 0, job_id = NULL, started_at = NULL
       WHERE id = 1 AND job_id = ?
@@ -164,6 +180,8 @@ export function releaseJobLock(jobId: string): void {
     }
   } catch (error) {
     console.error(`[DB Lock] Error releasing lock:`, error);
+  } finally {
+    lockDb.close();
   }
 }
 
@@ -171,11 +189,13 @@ export function releaseJobLock(jobId: string): void {
  * Check if the job lock is currently held (for status endpoint).
  */
 export function isJobLockHeld(): boolean {
+  // Use fresh connection to see current state
+  const lockDb = new Database(METRICS_DB_PATH);
+
   try {
-    const database = getDb();
     const now = Date.now();
 
-    const row = database.prepare(`
+    const row = lockDb.prepare(`
       SELECT is_locked, started_at FROM job_lock WHERE id = 1
     `).get() as { is_locked: number; started_at: number | null } | undefined;
 
@@ -192,5 +212,7 @@ export function isJobLockHeld(): boolean {
   } catch (error) {
     console.error(`[DB Lock] Error checking lock:`, error);
     return false;
+  } finally {
+    lockDb.close();
   }
 }
