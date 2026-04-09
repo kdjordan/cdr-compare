@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import Database from "better-sqlite3";
-import { incrementMetrics, tryAcquireJobLock, releaseJobLock, isJobLockHeld } from "@/lib/metrics";
+import { incrementMetrics, tryAcquireJobLock, releaseJobLock, isJobLockHeld, refreshJobLock } from "@/lib/metrics";
 import { v4 as uuidv4 } from "uuid";
 import { unlink, writeFile, readFile } from "fs/promises";
 import path from "path";

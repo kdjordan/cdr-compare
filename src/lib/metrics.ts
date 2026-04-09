@@ -103,7 +103,7 @@ export function getMetrics(): Metrics {
 // 3. No complex transaction isolation issues
 // 4. The lock file is on the persistent volume (/app/data)
 
-const JOB_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes - abandoned jobs release quickly
+const JOB_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes - balances slow uploads vs abandoned sessions
 
 interface LockFileContent {
   jobId: string;
@@ -215,6 +215,39 @@ export function releaseJobLock(jobId: string): void {
     console.error(`[File Lock] Error releasing lock:`, error);
     // Try to remove anyway to avoid stuck state
     try { unlinkSync(LOCK_FILE_PATH); } catch { /* ignore */ }
+  }
+}
+
+/**
+ * Refresh the lock timestamp to prevent stale detection during long uploads.
+ * Call this when the POST request starts processing (upload complete).
+ */
+export function refreshJobLock(jobId: string): boolean {
+  try {
+    if (!existsSync(LOCK_FILE_PATH)) {
+      return false;
+    }
+
+    const content = readFileSync(LOCK_FILE_PATH, "utf-8");
+    const lockInfo: LockFileContent = JSON.parse(content);
+
+    // Only refresh if this job owns the lock
+    if (lockInfo.jobId !== jobId) {
+      console.log(`[File Lock] Cannot refresh - lock held by ${lockInfo.jobId}, not ${jobId}`);
+      return false;
+    }
+
+    // Update the timestamp
+    const updatedLock: LockFileContent = {
+      ...lockInfo,
+      startedAt: Date.now(),
+    };
+    writeFileSync(LOCK_FILE_PATH, JSON.stringify(updatedLock));
+    console.log(`[File Lock] Job ${jobId} refreshed lock timestamp`);
+    return true;
+  } catch (error) {
+    console.error(`[File Lock] Error refreshing lock:`, error);
+    return false;
   }
 }
 
