@@ -103,7 +103,7 @@ export function getMetrics(): Metrics {
 // 3. No complex transaction isolation issues
 // 4. The lock file is on the persistent volume (/app/data)
 
-const JOB_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes max per job
+const JOB_TIMEOUT_MS = 2 * 60 * 1000; // 2 minutes - abandoned jobs release quickly
 
 interface LockFileContent {
   jobId: string;
