@@ -16,6 +16,7 @@ import {
   Timer,
   DollarSign,
   Users,
+  Loader2,
 } from "lucide-react";
 import { useReconciliation, ColumnMapping } from "@/context/ReconciliationContext";
 
@@ -384,6 +385,8 @@ export default function VerifyMappingPage() {
   const { fileA, fileB, mappingA, mappingB } = useReconciliation();
   const [acknowledged, setAcknowledged] = useState(false);
   const [serverStatus, setServerStatus] = useState<ServerStatus | null>(null);
+  const [isCheckingServer, setIsCheckingServer] = useState(false);
+  const [serverBusyError, setServerBusyError] = useState(false);
 
   // Check server capacity
   useEffect(() => {
@@ -393,6 +396,10 @@ export default function VerifyMappingPage() {
         if (res.ok) {
           const status = await res.json();
           setServerStatus(status);
+          // Clear the error if server becomes available
+          if (status.available) {
+            setServerBusyError(false);
+          }
         }
       } catch {
         // Ignore errors - we'll just not show the status
@@ -400,8 +407,8 @@ export default function VerifyMappingPage() {
     };
 
     checkStatus();
-    // Poll every 10 seconds
-    const interval = setInterval(checkStatus, 10000);
+    // Poll every 5 seconds (more frequent to catch availability quickly)
+    const interval = setInterval(checkStatus, 5000);
     return () => clearInterval(interval);
   }, []);
 
@@ -430,8 +437,29 @@ export default function VerifyMappingPage() {
   const hasWarnings = !validationA.overallValid || !validationB.overallValid;
   const totalWarnings = validationA.warningCount + validationB.warningCount;
 
-  const handleProceed = () => {
-    router.push("/processing");
+  const handleProceed = async () => {
+    // Check server availability BEFORE navigating to processing
+    // This prevents wasted upload time if server is busy
+    setIsCheckingServer(true);
+    setServerBusyError(false);
+
+    try {
+      const res = await fetch("/api/process");
+      if (res.ok) {
+        const status = await res.json();
+        if (!status.available) {
+          // Server is busy - show error, don't proceed
+          setServerBusyError(true);
+          setIsCheckingServer(false);
+          return;
+        }
+      }
+      // Server is available - proceed to processing
+      router.push("/processing");
+    } catch {
+      // On error, proceed anyway (fail open)
+      router.push("/processing");
+    }
   };
 
   return (
@@ -477,8 +505,30 @@ export default function VerifyMappingPage() {
               </p>
             </motion.div>
 
-            {/* Server busy banner */}
-            {serverStatus && !serverStatus.available && (
+            {/* Server busy error - shown when user tries to start while server is busy */}
+            {serverBusyError && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mb-8 rounded-xl border border-red-500/30 bg-red-500/10 p-4"
+              >
+                <div className="flex items-start gap-3">
+                  <Users className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <h3 className="font-medium text-red-500 mb-1">
+                      Server is at capacity
+                    </h3>
+                    <p className="text-sm text-muted-foreground">
+                      Another job is currently processing. Please wait a moment and try again.
+                      The page will automatically update when the server becomes available.
+                    </p>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {/* Server busy info banner - shows status without blocking */}
+            {serverStatus && !serverStatus.available && !serverBusyError && (
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -493,7 +543,7 @@ export default function VerifyMappingPage() {
                     </h3>
                     <p className="text-sm text-muted-foreground">
                       {serverStatus.activeJobs} of {serverStatus.maxJobs} processing slots are in use.
-                      You can still start processing - your job will be queued and start when a slot opens.
+                      You can review your mappings below while waiting.
                     </p>
                   </div>
                 </div>
@@ -582,19 +632,28 @@ export default function VerifyMappingPage() {
               </button>
               <button
                 onClick={handleProceed}
-                disabled={hasWarnings && !acknowledged}
+                disabled={(hasWarnings && !acknowledged) || isCheckingServer}
                 className={`
                   group px-8 py-3 rounded-xl font-display font-semibold text-sm
                   border transition-all duration-300 flex items-center gap-2
                   ${
-                    !hasWarnings || acknowledged
+                    (!hasWarnings || acknowledged) && !isCheckingServer
                       ? "bg-accent/10 border-accent/30 text-accent hover:bg-accent/20"
                       : "bg-muted/50 border-border text-muted-foreground cursor-not-allowed"
                   }
                 `}
               >
-                Start Processing
-                <ArrowRight className={`w-4 h-4 transition-transform ${!hasWarnings || acknowledged ? "group-hover:translate-x-1" : ""}`} />
+                {isCheckingServer ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Checking Server...
+                  </>
+                ) : (
+                  <>
+                    Start Processing
+                    <ArrowRight className={`w-4 h-4 transition-transform ${(!hasWarnings || acknowledged) ? "group-hover:translate-x-1" : ""}`} />
+                  </>
+                )}
               </button>
             </motion.div>
           </div>
