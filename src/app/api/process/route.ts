@@ -406,41 +406,45 @@ async function prepareCsvFile(filePath: string, fileName: string): Promise<{ csv
   throw new Error(`Unsupported file type: ${ext}`);
 }
 
-// Reserve endpoint - acquire lock BEFORE upload starts
-// This is the key to preventing races: whoever reserves first wins
+// Reserve/heartbeat endpoint
 export async function GET(request: NextRequest) {
   const url = new URL(request.url);
   const action = url.searchParams.get("action");
 
   // Just checking status (for polling)
-  if (action !== "reserve") {
+  if (!action) {
     const busy = isJobLockHeld();
-    return NextResponse.json({
-      busy,
-      available: !busy
-    });
+    return NextResponse.json({ busy, available: !busy });
   }
 
-  // Reserve action: actually acquire the lock NOW
-  // This happens when user clicks "Start Processing"
-  const jobId = uuidv4();
-  const lock = tryAcquireJobLock(jobId);
-
-  if (!lock.acquired) {
-    return NextResponse.json({
-      reserved: false,
-      available: false,
-      reason: lock.reason,
-    });
+  // Heartbeat: refresh lock timestamp to keep it alive during long uploads
+  if (action === "heartbeat") {
+    const jobId = url.searchParams.get("jobId");
+    if (!jobId) {
+      return NextResponse.json({ error: "Missing jobId" }, { status: 400 });
+    }
+    const refreshed = refreshJobLock(jobId);
+    return NextResponse.json({ refreshed });
   }
 
-  // Lock acquired! Return the jobId so the client can use it
-  console.log(`[Reserve] Job ${jobId} reserved slot`);
-  return NextResponse.json({
-    reserved: true,
-    available: true,
-    jobId,
-  });
+  // Reserve: acquire the lock NOW (when user clicks "Start Processing")
+  if (action === "reserve") {
+    const jobId = uuidv4();
+    const lock = tryAcquireJobLock(jobId);
+
+    if (!lock.acquired) {
+      return NextResponse.json({
+        reserved: false,
+        available: false,
+        reason: lock.reason,
+      });
+    }
+
+    console.log(`[Reserve] Job ${jobId} reserved slot`);
+    return NextResponse.json({ reserved: true, available: true, jobId });
+  }
+
+  return NextResponse.json({ error: "Unknown action" }, { status: 400 });
 }
 
 export async function POST(request: NextRequest) {

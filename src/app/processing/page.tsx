@@ -65,6 +65,8 @@ export default function ProcessingPage() {
   const [isServerBusy, setIsServerBusy] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
   const processingStarted = useRef(false);
+  const heartbeatInterval = useRef<NodeJS.Timeout | null>(null);
+  const jobIdRef = useRef<string | null>(null);
 
   // Redirect if no data
   useEffect(() => {
@@ -73,8 +75,38 @@ export default function ProcessingPage() {
     }
   }, [fileA, fileB, mappingA, mappingB, router]);
 
+  // Stop heartbeat helper
+  const stopHeartbeat = () => {
+    if (heartbeatInterval.current) {
+      clearInterval(heartbeatInterval.current);
+      heartbeatInterval.current = null;
+    }
+  };
+
+  // Start heartbeat - keeps lock alive during long uploads
+  const startHeartbeat = (jobId: string) => {
+    jobIdRef.current = jobId;
+    stopHeartbeat(); // Clear any existing
+
+    // Send heartbeat every 30 seconds
+    heartbeatInterval.current = setInterval(async () => {
+      if (!jobIdRef.current) return;
+      try {
+        await fetch(`/api/process?action=heartbeat&jobId=${jobIdRef.current}`);
+      } catch {
+        // Ignore heartbeat errors
+      }
+    }, 30000);
+  };
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => stopHeartbeat();
+  }, []);
+
   // Retry handler
   const handleRetry = () => {
+    stopHeartbeat();
     setIsServerBusy(false);
     setError(null);
     processingStarted.current = false;
@@ -100,7 +132,9 @@ export default function ProcessingPage() {
         // This means the lock was already acquired before navigation
         const reservedJobId = sessionStorage.getItem("reservedJobId");
         if (reservedJobId) {
-          sessionStorage.removeItem("reservedJobId"); // Clean up
+          sessionStorage.removeItem("reservedJobId");
+          // Start heartbeat to keep lock alive during upload
+          startHeartbeat(reservedJobId);
         }
 
         const formData = new FormData();
@@ -126,6 +160,7 @@ export default function ProcessingPage() {
         if (!response.ok) {
           // Handle server busy (503) specially
           if (response.status === 503) {
+            stopHeartbeat();
             setIsServerBusy(true);
             setCurrentStep(0);
             return;
@@ -152,6 +187,9 @@ export default function ProcessingPage() {
         };
         setResults(results);
 
+        // Done - stop heartbeat
+        stopHeartbeat();
+
         // Small delay before marking complete
         await new Promise((resolve) => setTimeout(resolve, 500));
         setIsComplete(true);
@@ -161,6 +199,7 @@ export default function ProcessingPage() {
           router.push("/results");
         }, 1000);
       } catch (err) {
+        stopHeartbeat();
         console.error("Processing error:", err);
         setError(getFriendlyErrorMessage(err));
       }
