@@ -22,13 +22,9 @@ const JOB_COOLDOWN_MS = 5000; // 5 second delay between jobs for memory to settl
 // Only ONE job can run at a time
 const JOB_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes max per job
 
-// Mutex state
+// Mutex state - only ONE job can run at a time
 let isJobRunning = false;
 let jobStartTime = 0;
-let lastJobEndTime = 0;
-let mutexQueue: Array<{
-  resolve: (result: { acquired: boolean; queuePosition?: number; reason?: string; memoryMB?: number }) => void;
-}> = [];
 
 // Check available system memory
 function getAvailableMemoryMB(): number {
@@ -44,46 +40,22 @@ function checkAndResetStuckJob() {
       console.log(`[Concurrency] Resetting stuck job. Elapsed ${elapsed}ms > ${JOB_TIMEOUT_MS}ms timeout`);
       isJobRunning = false;
       jobStartTime = 0;
-      // Process next in queue
-      processQueue();
     }
   }
 }
 
-// Process the mutex queue - grant lock to next waiter
-function processQueue() {
-  if (mutexQueue.length > 0 && !isJobRunning) {
-    const next = mutexQueue.shift();
-    if (next) {
-      // Check memory before granting
-      const availableMemory = getAvailableMemoryMB();
-      if (availableMemory < MIN_FREE_MEMORY_MB) {
-        next.resolve({ acquired: false, reason: "low_memory", memoryMB: availableMemory });
-        // Try next in queue
-        processQueue();
-        return;
-      }
-      isJobRunning = true;
-      jobStartTime = Date.now();
-      console.log(`[Concurrency] Job started (from queue). Memory: ${availableMemory}MB`);
-      next.resolve({ acquired: true });
-    }
-  }
-}
-
-async function acquireSlot(timeoutMs: number = 30000): Promise<{ acquired: boolean; queuePosition?: number; reason?: string; memoryMB?: number }> {
+function acquireSlot(): { acquired: boolean; reason?: string; memoryMB?: number } {
   // Check for stuck job first
   checkAndResetStuckJob();
 
-  // Check cooldown period
-  const timeSinceLastJob = Date.now() - lastJobEndTime;
-  if (lastJobEndTime > 0 && timeSinceLastJob < JOB_COOLDOWN_MS) {
-    const waitTime = JOB_COOLDOWN_MS - timeSinceLastJob;
-    console.log(`[Memory] Cooldown active, waiting ${waitTime}ms before next job`);
-    await new Promise(resolve => setTimeout(resolve, waitTime));
+  // If a job is already running, reject immediately
+  // No queuing - user should know right away and can retry later
+  if (isJobRunning) {
+    console.log(`[Concurrency] Job rejected - another job is already running`);
+    return { acquired: false, reason: "busy" };
   }
 
-  // Check available memory first
+  // Check available memory
   const availableMemory = getAvailableMemoryMB();
   console.log(`[Memory] Available: ${availableMemory}MB, Required: ${MIN_FREE_MEMORY_MB}MB`);
 
@@ -96,45 +68,17 @@ async function acquireSlot(timeoutMs: number = 30000): Promise<{ acquired: boole
     };
   }
 
-  // Try to acquire the mutex immediately
-  if (!isJobRunning) {
-    isJobRunning = true;
-    jobStartTime = Date.now();
-    console.log(`[Concurrency] Job started (immediate). Memory: ${availableMemory}MB`);
-    return { acquired: true };
-  }
-
-  // Job is running - queue this request
-  const queuePosition = mutexQueue.length + 1;
-  console.log(`[Concurrency] Job busy, queuing request at position ${queuePosition}`);
-
-  return new Promise((resolve) => {
-    const timeoutHandle = setTimeout(() => {
-      // Remove from queue on timeout
-      const idx = mutexQueue.findIndex(w => w.resolve === wrappedResolve);
-      if (idx !== -1) {
-        mutexQueue.splice(idx, 1);
-        console.log(`[Concurrency] Request timed out after ${timeoutMs}ms, removed from queue`);
-      }
-      resolve({ acquired: false, queuePosition, reason: "timeout" });
-    }, timeoutMs);
-
-    const wrappedResolve = (result: { acquired: boolean; queuePosition?: number; reason?: string; memoryMB?: number }) => {
-      clearTimeout(timeoutHandle);
-      resolve(result);
-    };
-
-    mutexQueue.push({ resolve: wrappedResolve });
-  });
+  // Acquire the slot
+  isJobRunning = true;
+  jobStartTime = Date.now();
+  console.log(`[Concurrency] Job started. Memory: ${availableMemory}MB`);
+  return { acquired: true };
 }
 
 function releaseSlot() {
   isJobRunning = false;
   jobStartTime = 0;
-  lastJobEndTime = Date.now();
-  console.log(`[Concurrency] Job completed, cooldown started (${JOB_COOLDOWN_MS}ms). Queue length: ${mutexQueue.length}`);
-  // Process next in queue after a microtask (ensures state is consistent)
-  queueMicrotask(() => processQueue());
+  console.log(`[Concurrency] Job completed, server now available`);
 }
 
 // Types
@@ -526,16 +470,14 @@ export async function GET() {
   checkAndResetStuckJob();
 
   return NextResponse.json({
-    activeJobs: isJobRunning ? 1 : 0,
-    maxJobs: 1,
-    queueLength: mutexQueue.length,
+    busy: isJobRunning,
     available: !isJobRunning
   });
 }
 
 export async function POST(request: NextRequest) {
-  // Check concurrency and memory - wait up to 30s for a slot
-  const slot = await acquireSlot(30000);
+  // Check concurrency and memory - reject immediately if busy
+  const slot = acquireSlot();
   if (!slot.acquired) {
     // Different error messages based on reason
     if (slot.reason === "low_memory") {
@@ -551,13 +493,10 @@ export async function POST(request: NextRequest) {
     }
     return NextResponse.json(
       {
-        error: "Server is busy processing other files. Please try again in a few minutes.",
-        reason: slot.reason || "busy",
-        queuePosition: slot.queuePosition,
-        activeJobs: 1,
-        maxJobs: 1
+        error: "Server is currently processing another comparison. Please wait a few minutes and try again.",
+        reason: "busy"
       },
-      { status: 503, headers: { "Retry-After": "60" } }
+      { status: 503, headers: { "Retry-After": "120" } }
     );
   }
 
