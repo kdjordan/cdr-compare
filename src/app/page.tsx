@@ -100,56 +100,6 @@ export default function Home() {
   // Server capacity state
   const [isServerBusy, setIsServerBusy] = useState(false);
 
-  // Upload speed estimation
-  const [uploadEstimate, setUploadEstimate] = useState<{
-    speedMbps: number;
-    estimatedSeconds: number;
-    totalSizeMB: number;
-  } | null>(null);
-  const [isTestingSpeed, setIsTestingSpeed] = useState(false);
-
-  // Run speed test when both files are selected
-  const runSpeedTest = async (fileA: File, fileB: File) => {
-    setIsTestingSpeed(true);
-    try {
-      // Create a 2MB test payload - large enough to measure real throughput
-      // (small payloads are dominated by latency/handshake overhead)
-      const testSize = 2 * 1024 * 1024;
-      const testPayload = new Blob([new ArrayBuffer(testSize)]);
-
-      const startTime = performance.now();
-      const response = await fetch("/api/speed-test", {
-        method: "POST",
-        body: testPayload,
-      });
-      const endTime = performance.now();
-
-      if (response.ok) {
-        const totalSize = fileA.size + fileB.size;
-        const totalSizeMB = totalSize / (1024 * 1024);
-
-        // Use client-side timing for upload speed
-        const clientDurationSec = (endTime - startTime) / 1000;
-        const clientSpeedBps = testSize / clientDurationSec;
-        const clientSpeedMbps = clientSpeedBps / (1024 * 1024);
-
-        // Estimate upload time (add 10% buffer for variance)
-        const estimatedSeconds = Math.ceil((totalSize / clientSpeedBps) * 1.1);
-
-        setUploadEstimate({
-          speedMbps: clientSpeedMbps,
-          estimatedSeconds,
-          totalSizeMB,
-        });
-      }
-    } catch (err) {
-      console.error("Speed test failed:", err);
-      // Don't block on speed test failure
-    } finally {
-      setIsTestingSpeed(false);
-    }
-  };
-
   // Check server capacity on mount and poll while busy
   useEffect(() => {
     let pollInterval: NodeJS.Timeout | null = null;
@@ -251,11 +201,6 @@ export default function Home() {
     setLocalMappingB(mapping);
     setLocalSettingsB(settings);
     setStep("ready");
-
-    // Run speed test when entering ready step
-    if (parsedFileA?.file && parsedFileB?.file) {
-      runSpeedTest(parsedFileA.file, parsedFileB.file);
-    }
   };
 
   // Handle start processing - go to verification first
@@ -558,42 +503,6 @@ export default function Home() {
                     <Loader2 className="w-4 h-4 animate-spin" />
                     <span>Parsing file...</span>
                   </div>
-                )}
-
-                {/* Upload estimate - show when ready */}
-                {step === 'ready' && (
-                  <motion.div
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    className="mb-4"
-                  >
-                    {isTestingSpeed ? (
-                      <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        <span>Testing connection speed...</span>
-                      </div>
-                    ) : uploadEstimate ? (
-                      <div className="text-center text-sm">
-                        <p className="text-muted-foreground">
-                          Total size: <span className="text-foreground font-medium">{uploadEstimate.totalSizeMB.toFixed(0)} MB</span>
-                          {' • '}
-                          Speed: <span className="text-foreground font-medium">{uploadEstimate.speedMbps.toFixed(1)} MB/s</span>
-                        </p>
-                        {uploadEstimate.estimatedSeconds > 60 ? (
-                          <p className="mt-1 text-amber-500">
-                            ⚠️ Estimated upload time: <span className="font-medium">{Math.ceil(uploadEstimate.estimatedSeconds / 60)} minutes</span>
-                            {uploadEstimate.estimatedSeconds > 300 && (
-                              <span className="block text-xs mt-1">Large uploads on slow connections may fail. Consider splitting files if upload fails.</span>
-                            )}
-                          </p>
-                        ) : (
-                          <p className="mt-1 text-accent">
-                            Estimated upload time: <span className="font-medium">{uploadEstimate.estimatedSeconds} seconds</span>
-                          </p>
-                        )}
-                      </div>
-                    ) : null}
-                  </motion.div>
                 )}
 
                 {/* CTA Button - only show when ready */}
