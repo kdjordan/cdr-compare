@@ -191,11 +191,37 @@ Files can be 100-300MB with millions of records. Key optimizations:
 **OOM crashes**
 - Memory safety checks are in place (see `route.ts:17-19`):
   - `MIN_FREE_MEMORY_MB = 1500` - Requires 1.5GB free RAM to start a job
-  - `JOB_COOLDOWN_MS = 5000` - 5 second delay between jobs for memory to settle
 - If memory is low, returns 503 with `reason: "low_memory"` instead of crashing
-- `MAX_CONCURRENT_JOBS = 1` prevents parallel processing
+- Only 1 job at a time (enforced by file lock)
 - Server has 4GB swap configured
 - Max 2 million rows per file limit
+
+## Concurrency Control
+
+Only one job runs at a time. This is enforced with a file-based lock, not module variables (which don't work across Next.js workers or Coolify rolling updates).
+
+**How it works:**
+
+1. User clicks "Start Processing" on verify page
+2. Frontend calls `GET /api/process?action=reserve`
+3. Server creates lock file at `/app/data/.job.lock` using `writeFileSync` with `wx` flag (atomic - fails if file exists)
+4. If lock acquired, returns `jobId`; if busy, returns `reserved: false`
+5. Frontend stores `jobId` in sessionStorage, navigates to processing page
+6. Processing page sends heartbeat every 30s: `GET /api/process?action=heartbeat&jobId=xxx`
+7. Heartbeat refreshes lock timestamp to prevent stale detection
+8. When job completes (success or error), lock file is deleted
+9. If user closes tab (no heartbeats), lock expires after 2 minutes
+
+**Key files:**
+- `src/lib/metrics.ts` - `tryAcquireJobLock()`, `releaseJobLock()`, `refreshJobLock()`, `isJobLockHeld()`
+- `src/app/api/process/route.ts` - Reserve/heartbeat endpoints in GET handler
+- `src/app/mapping/verify/page.tsx` - Calls reserve on button click
+- `src/app/processing/page.tsx` - Sends heartbeats during upload/processing
+
+**Why file locks, not SQLite or module variables:**
+- Module variables: Each Next.js worker has isolated memory
+- SQLite: WAL mode + rolling updates = complex isolation issues
+- File `wx` flag: Truly atomic across all processes sharing the volume
 
 ## Testing
 

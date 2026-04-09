@@ -70,3 +70,26 @@ Fixed OOM (Out of Memory) kills during large file processing.
 - Hosted on Coolify at Hetzner
 - CI/CD deploys from `main` branch
 - Persistent volume for metrics database survives container restarts
+
+## Session: 2026-04-08
+
+### Concurrency Lock Fix
+
+Fixed race condition allowing multiple jobs to run simultaneously despite `MAX_CONCURRENT_JOBS = 1`.
+
+**Problem:** Module-level variables and SQLite locks don't work across Next.js workers or Coolify rolling updates (two containers share volume during deploy).
+
+**Solution:** File-based lock with atomic file creation (`writeFileSync` with `wx` flag):
+- Lock file at `/app/data/.job.lock` on persistent volume
+- Lock acquired when user clicks "Start Processing" (not after upload)
+- Heartbeat every 30s keeps lock alive during long uploads
+- 2-minute timeout releases abandoned sessions
+- Second user sees "Server at capacity" immediately
+
+**Files:** `src/lib/metrics.ts`, `src/app/api/process/route.ts`, `src/app/mapping/verify/page.tsx`, `src/app/processing/page.tsx`
+
+### Removed Speed Test
+
+Removed connection speed test UI - no longer needed with heartbeat system. Any upload duration is now supported.
+
+**Deleted:** `src/app/api/speed-test/route.ts`
