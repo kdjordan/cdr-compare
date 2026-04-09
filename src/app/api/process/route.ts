@@ -3,6 +3,7 @@ import Database from "better-sqlite3";
 import { incrementMetrics } from "@/lib/metrics";
 import { v4 as uuidv4 } from "uuid";
 import { unlink, writeFile, readFile } from "fs/promises";
+import { existsSync, readFileSync, writeFileSync, unlinkSync } from "fs";
 import path from "path";
 import Papa from "papaparse";
 import JSZip from "jszip";
@@ -16,15 +17,17 @@ const execAsync = promisify(exec);
 
 // Memory safety settings
 const MIN_FREE_MEMORY_MB = 1500; // Minimum 1.5GB free memory required to start a job
-const JOB_COOLDOWN_MS = 5000; // 5 second delay between jobs for memory to settle
 
-// Concurrency control - MUTEX-based to prevent race conditions
-// Only ONE job can run at a time
+// Concurrency control via FILE-BASED LOCK
+// Module-level variables DO NOT work in Next.js because each worker/process has its own copy
+// File-based locks work across ALL processes
+const LOCK_FILE_PATH = "/tmp/cdrcheck-job.lock";
 const JOB_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes max per job
 
-// Mutex state - only ONE job can run at a time
-let isJobRunning = false;
-let jobStartTime = 0;
+interface LockInfo {
+  startTime: number;
+  jobId: string;
+}
 
 // Check available system memory
 function getAvailableMemoryMB(): number {
@@ -32,53 +35,107 @@ function getAvailableMemoryMB(): number {
   return Math.floor(freeMem / (1024 * 1024));
 }
 
-// Safety: reset stuck job (in case a job crashes without releasing)
-function checkAndResetStuckJob() {
-  if (isJobRunning && jobStartTime > 0) {
-    const elapsed = Date.now() - jobStartTime;
-    if (elapsed > JOB_TIMEOUT_MS) {
-      console.log(`[Concurrency] Resetting stuck job. Elapsed ${elapsed}ms > ${JOB_TIMEOUT_MS}ms timeout`);
-      isJobRunning = false;
-      jobStartTime = 0;
+// Acquire file-based lock - works across all processes
+function acquireLock(jobId: string): { acquired: boolean; reason?: string; memoryMB?: number } {
+  try {
+    // Check if lock file exists
+    if (existsSync(LOCK_FILE_PATH)) {
+      try {
+        const lockContent = readFileSync(LOCK_FILE_PATH, "utf-8");
+        const lockInfo: LockInfo = JSON.parse(lockContent);
+
+        const elapsed = Date.now() - lockInfo.startTime;
+
+        // Check if lock is stale (job crashed without releasing)
+        if (elapsed > JOB_TIMEOUT_MS) {
+          console.log(`[Lock] Stale lock detected (${Math.round(elapsed / 1000)}s old), overriding`);
+          // Fall through to create new lock
+        } else {
+          console.log(`[Lock] Job ${jobId} REJECTED - another job ${lockInfo.jobId} is running (started ${Math.round(elapsed / 1000)}s ago)`);
+          return { acquired: false, reason: "busy" };
+        }
+      } catch (parseError) {
+        // Lock file is corrupted, override it
+        console.log(`[Lock] Corrupted lock file, overriding`);
+      }
     }
-  }
-}
 
-function acquireSlot(): { acquired: boolean; reason?: string; memoryMB?: number } {
-  // Check for stuck job first
-  checkAndResetStuckJob();
+    // Check available memory
+    const availableMemory = getAvailableMemoryMB();
+    console.log(`[Memory] Available: ${availableMemory}MB, Required: ${MIN_FREE_MEMORY_MB}MB`);
 
-  // If a job is already running, reject immediately
-  // No queuing - user should know right away and can retry later
-  if (isJobRunning) {
-    console.log(`[Concurrency] Job rejected - another job is already running`);
-    return { acquired: false, reason: "busy" };
-  }
+    if (availableMemory < MIN_FREE_MEMORY_MB) {
+      console.log(`[Memory] Insufficient memory: ${availableMemory}MB < ${MIN_FREE_MEMORY_MB}MB required`);
+      return {
+        acquired: false,
+        reason: "low_memory",
+        memoryMB: availableMemory
+      };
+    }
 
-  // Check available memory
-  const availableMemory = getAvailableMemoryMB();
-  console.log(`[Memory] Available: ${availableMemory}MB, Required: ${MIN_FREE_MEMORY_MB}MB`);
-
-  if (availableMemory < MIN_FREE_MEMORY_MB) {
-    console.log(`[Memory] Insufficient memory: ${availableMemory}MB < ${MIN_FREE_MEMORY_MB}MB required`);
-    return {
-      acquired: false,
-      reason: "low_memory",
-      memoryMB: availableMemory
+    // Create lock file atomically
+    const lockInfo: LockInfo = {
+      startTime: Date.now(),
+      jobId
     };
-  }
+    writeFileSync(LOCK_FILE_PATH, JSON.stringify(lockInfo), { encoding: "utf-8", flag: "w" });
+    console.log(`[Lock] Job ${jobId} ACQUIRED lock. Memory: ${availableMemory}MB`);
 
-  // Acquire the slot
-  isJobRunning = true;
-  jobStartTime = Date.now();
-  console.log(`[Concurrency] Job started. Memory: ${availableMemory}MB`);
-  return { acquired: true };
+    return { acquired: true };
+  } catch (error) {
+    console.error(`[Lock] Error acquiring lock:`, error);
+    // On error, allow the job to proceed (fail open) but log it
+    return { acquired: true };
+  }
 }
 
-function releaseSlot() {
-  isJobRunning = false;
-  jobStartTime = 0;
-  console.log(`[Concurrency] Job completed, server now available`);
+// Release file-based lock
+function releaseLock(jobId: string) {
+  try {
+    if (existsSync(LOCK_FILE_PATH)) {
+      try {
+        const lockContent = readFileSync(LOCK_FILE_PATH, "utf-8");
+        const lockInfo: LockInfo = JSON.parse(lockContent);
+
+        // Only delete if it's our lock
+        if (lockInfo.jobId === jobId) {
+          unlinkSync(LOCK_FILE_PATH);
+          console.log(`[Lock] Job ${jobId} RELEASED lock`);
+        } else {
+          console.log(`[Lock] Not releasing - lock belongs to ${lockInfo.jobId}, not ${jobId}`);
+        }
+      } catch (parseError) {
+        // Lock file is corrupted, delete it anyway
+        unlinkSync(LOCK_FILE_PATH);
+        console.log(`[Lock] Deleted corrupted lock file`);
+      }
+    }
+  } catch (error) {
+    console.error(`[Lock] Error releasing lock:`, error);
+  }
+}
+
+// Check lock status (for GET endpoint)
+function isLocked(): boolean {
+  try {
+    if (!existsSync(LOCK_FILE_PATH)) {
+      return false;
+    }
+
+    const lockContent = readFileSync(LOCK_FILE_PATH, "utf-8");
+    const lockInfo: LockInfo = JSON.parse(lockContent);
+
+    const elapsed = Date.now() - lockInfo.startTime;
+
+    // Lock is stale if older than timeout
+    if (elapsed > JOB_TIMEOUT_MS) {
+      return false;
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // Types
@@ -466,26 +523,28 @@ async function prepareCsvFile(filePath: string, fileName: string): Promise<{ csv
 
 // Status endpoint - check server capacity before uploading
 export async function GET() {
-  // Check for stuck job before reporting status
-  checkAndResetStuckJob();
+  const busy = isLocked();
 
   return NextResponse.json({
-    busy: isJobRunning,
-    available: !isJobRunning
+    busy,
+    available: !busy
   });
 }
 
 export async function POST(request: NextRequest) {
-  // Check concurrency and memory - reject immediately if busy
-  const slot = acquireSlot();
-  if (!slot.acquired) {
+  // Generate job ID first - needed for lock
+  const jobId = uuidv4();
+
+  // Check concurrency and memory using FILE-BASED LOCK - reject immediately if busy
+  const lock = acquireLock(jobId);
+  if (!lock.acquired) {
     // Different error messages based on reason
-    if (slot.reason === "low_memory") {
+    if (lock.reason === "low_memory") {
       return NextResponse.json(
         {
-          error: `Server memory is low (${slot.memoryMB}MB available). Please wait a moment and try again.`,
+          error: `Server memory is low (${lock.memoryMB}MB available). Please wait a moment and try again.`,
           reason: "low_memory",
-          availableMemoryMB: slot.memoryMB,
+          availableMemoryMB: lock.memoryMB,
           requiredMemoryMB: MIN_FREE_MEMORY_MB
         },
         { status: 503, headers: { "Retry-After": "30" } }
@@ -499,8 +558,6 @@ export async function POST(request: NextRequest) {
       { status: 503, headers: { "Retry-After": "120" } }
     );
   }
-
-  const jobId = uuidv4();
   const dbPath = path.join("/tmp", `job-${jobId}.db`);
   const fileAPath = path.join("/tmp", `job-${jobId}-fileA`);
   const fileBPath = path.join("/tmp", `job-${jobId}-fileB`);
@@ -688,7 +745,7 @@ export async function POST(request: NextRequest) {
 
     if (!rowCountA || !rowCountB) {
       await cleanup();
-      releaseSlot();
+      releaseLock(jobId);
       return NextResponse.json({ error: "One or both files contain no data" }, { status: 400 });
     }
 
@@ -1294,7 +1351,7 @@ export async function POST(request: NextRequest) {
 
     // Cleanup database and release concurrency slot
     await cleanup();
-    releaseSlot();
+    releaseLock(jobId);
 
     // MEMORY OPTIMIZATION: Get sampled discrepancies directly from collector
     // The collector already keeps only top N per category, sorted by |cost_difference|
@@ -1343,7 +1400,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("Processing error:", error);
     await cleanup();
-    releaseSlot();
+    releaseLock(jobId);
 
     return NextResponse.json(
       {
