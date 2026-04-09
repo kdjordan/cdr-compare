@@ -406,19 +406,61 @@ async function prepareCsvFile(filePath: string, fileName: string): Promise<{ csv
   throw new Error(`Unsupported file type: ${ext}`);
 }
 
-// Status endpoint - check server capacity before uploading
-export async function GET() {
-  const busy = isJobLockHeld();
+// Reserve endpoint - acquire lock BEFORE upload starts
+// This is the key to preventing races: whoever reserves first wins
+export async function GET(request: NextRequest) {
+  const url = new URL(request.url);
+  const action = url.searchParams.get("action");
 
+  // Just checking status (for polling)
+  if (action !== "reserve") {
+    const busy = isJobLockHeld();
+    return NextResponse.json({
+      busy,
+      available: !busy
+    });
+  }
+
+  // Reserve action: actually acquire the lock NOW
+  // This happens when user clicks "Start Processing"
+  const jobId = uuidv4();
+  const lock = tryAcquireJobLock(jobId);
+
+  if (!lock.acquired) {
+    return NextResponse.json({
+      reserved: false,
+      available: false,
+      reason: lock.reason,
+    });
+  }
+
+  // Lock acquired! Return the jobId so the client can use it
+  console.log(`[Reserve] Job ${jobId} reserved slot`);
   return NextResponse.json({
-    busy,
-    available: !busy
+    reserved: true,
+    available: true,
+    jobId,
   });
 }
 
 export async function POST(request: NextRequest) {
-  // Generate job ID first - needed for lock
-  const jobId = uuidv4();
+  // Check for pre-reserved jobId from query params
+  const url = new URL(request.url);
+  const reservedJobId = url.searchParams.get("jobId");
+
+  let jobId: string;
+  let lockAlreadyHeld = false;
+
+  if (reservedJobId) {
+    // Client has a reservation - verify it's still valid
+    // The lock file should exist and belong to this jobId
+    jobId = reservedJobId;
+    lockAlreadyHeld = true;
+    console.log(`[Process] Using reserved jobId: ${jobId}`);
+  } else {
+    // No reservation - try to acquire lock now (legacy flow)
+    jobId = uuidv4();
+  }
 
   // Check available memory first
   const availableMemory = getAvailableMemoryMB();
@@ -426,6 +468,10 @@ export async function POST(request: NextRequest) {
 
   if (availableMemory < MIN_FREE_MEMORY_MB) {
     console.log(`[Memory] Insufficient memory: ${availableMemory}MB < ${MIN_FREE_MEMORY_MB}MB required`);
+    // Release the reserved lock if we're failing due to memory
+    if (lockAlreadyHeld) {
+      releaseJobLock(jobId);
+    }
     return NextResponse.json(
       {
         error: `Server memory is low (${availableMemory}MB available). Please wait a moment and try again.`,
@@ -437,16 +483,18 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Try to acquire the DATABASE lock - this works across all containers
-  const lock = tryAcquireJobLock(jobId);
-  if (!lock.acquired) {
-    return NextResponse.json(
-      {
-        error: "Server is currently processing another comparison. Please wait a few minutes and try again.",
-        reason: "busy"
-      },
-      { status: 503, headers: { "Retry-After": "120" } }
-    );
+  // If no reservation, try to acquire lock now
+  if (!lockAlreadyHeld) {
+    const lock = tryAcquireJobLock(jobId);
+    if (!lock.acquired) {
+      return NextResponse.json(
+        {
+          error: "Server is currently processing another comparison. Please wait a few minutes and try again.",
+          reason: "busy"
+        },
+        { status: 503, headers: { "Retry-After": "120" } }
+      );
+    }
   }
   const dbPath = path.join("/tmp", `job-${jobId}.db`);
   const fileAPath = path.join("/tmp", `job-${jobId}-fileA`);

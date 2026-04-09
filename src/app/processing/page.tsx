@@ -96,6 +96,13 @@ export default function ProcessingPage() {
         // Step 1: Uploading - stays on this step until server responds
         setCurrentStep(0);
 
+        // Check for reserved jobId from verify page
+        // This means the lock was already acquired before navigation
+        const reservedJobId = sessionStorage.getItem("reservedJobId");
+        if (reservedJobId) {
+          sessionStorage.removeItem("reservedJobId"); // Clean up
+        }
+
         const formData = new FormData();
         formData.append("fileA", fileA.file);
         formData.append("fileB", fileB.file);
@@ -105,8 +112,9 @@ export default function ProcessingPage() {
         formData.append("settingsB", JSON.stringify(settingsB));
 
         // Upload and wait for server response
-        // Note: fetch() includes both upload AND server processing time
-        const response = await fetch("/api/process", {
+        // Pass the reserved jobId if we have one (lock already acquired)
+        const url = reservedJobId ? `/api/process?jobId=${reservedJobId}` : "/api/process";
+        const response = await fetch(url, {
           method: "POST",
           body: formData,
         });

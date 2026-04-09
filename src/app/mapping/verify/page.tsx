@@ -438,26 +438,33 @@ export default function VerifyMappingPage() {
   const totalWarnings = validationA.warningCount + validationB.warningCount;
 
   const handleProceed = async () => {
-    // Check server availability BEFORE navigating to processing
-    // This prevents wasted upload time if server is busy
+    // RESERVE the server slot BEFORE navigating to processing
+    // This is NOT just a check - it actually acquires the lock
+    // Whoever clicks first wins, others get rejected immediately
     setIsCheckingServer(true);
     setServerBusyError(false);
 
     try {
-      const res = await fetch("/api/process");
+      const res = await fetch("/api/process?action=reserve");
       if (res.ok) {
-        const status = await res.json();
-        if (!status.available) {
-          // Server is busy - show error, don't proceed
+        const result = await res.json();
+        if (!result.reserved) {
+          // Failed to reserve - server is busy
           setServerBusyError(true);
           setIsCheckingServer(false);
           return;
         }
+        // Reserved successfully! Pass the jobId to processing page
+        // Store in sessionStorage so processing page can use it
+        sessionStorage.setItem("reservedJobId", result.jobId);
+        router.push("/processing");
+      } else {
+        // Request failed - show error
+        setServerBusyError(true);
+        setIsCheckingServer(false);
       }
-      // Server is available - proceed to processing
-      router.push("/processing");
     } catch {
-      // On error, proceed anyway (fail open)
+      // On network error, try anyway (processing will handle it)
       router.push("/processing");
     }
   };
